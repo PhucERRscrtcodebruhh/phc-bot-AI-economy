@@ -13,7 +13,6 @@ from discord.ext import commands
 from discord.ui import View, TextInput, Modal, Select
 from dotenv import load_dotenv
 
-# Import các định nghĩa tĩnh từ constants chung một thư mục
 from constants import ore, KESLING_ICON
 
 try:
@@ -25,7 +24,10 @@ except Exception:
 
 load_dotenv()
 
+# Tải danh sách Key và khởi tạo biến đếm toàn cục để cân bằng tải
 GEMINI_KEYS = [k.strip() for k in os.getenv("GEMINI_KEYS", "").split(",") if k.strip()]
+gemini_key_index = 0
+
 KNOWLEDGE_FILE = "knowledge.yml"
 QUIZ_FILE = 'quiz_questions.json'
 G4F_MODELS_FILE = "g4f_active_models.json"
@@ -94,27 +96,49 @@ def split_message(text: str, limit: int = 1900) -> list[str]:
 
 # ==================== PROMPTS & KNOWLEDGE ====================
 
-SYSTEM_PROMPT = (
-    "Bạn là một cô em gái dễ thương, thân thiện, lễ phép. "
-    "Bạn luôn gọi người dùng là 'oniichan' và xưng mình là 'em'. "
-    "Hãy trả lời một cách tự nhiên, ngắn gọn và dí dỏm bằng tiếng Việt. "
-    "Tránh trả lời quá dài dòng trừ khi được yêu cầu.\n\n"
+BASE_SYSTEM_PROMPT = (
+    "Bạn là một hệ thống tương tác thông minh, thân thiện, lễ phép. "
+    "Mặc định, bạn phản hồi ngắn gọn và dí dỏm bằng tiếng Việt.\n\n"
     "⚠️ QUY TẮC BẢO MẬT VÀ HÀNH XỬ QUAN TRỌNG:\n"
-    "1. Bạn có một ký ức đi kèm dưới dạng thông tin thực tế. Hãy sử dụng những thông tin đó để trả lời một cách tự nhiên nhất.\n"
-    "2. Tuyệt đối KHÔNG ĐƯỢC sao chép lại cấu trúc dữ liệu thô hoặc đề cập đến từ khóa 'YAML', 'file', 'tri thức' hay 'hệ thống'.\n"
-    "3. Tuyệt đối KHÔNG ĐƯỢC xuất ra các bước suy nghĩ (thinking) hoặc phân tích câu hỏi thô."
+    "1. Tuyệt đối KHÔNG ĐƯỢC sao chép lại cấu trúc dữ liệu thô hoặc đề cập đến từ khóa 'YAML', 'file', 'tri thức' hay 'hệ thống' trong câu trả lời.\n"
+    "2. Tuyệt đối KHÔNG ĐƯỢC xuất ra các bước suy nghĩ (thinking) hoặc phân tích câu hỏi thô.\n"
+    "3. Hãy tuân thủ nghiêm ngặt theo các chỉ dẫn và thiết lập nhân vật (Persona) được cung cấp động trong phần cấu hình ngữ cảnh dưới đây."
 )
 
-def load_knowledge_base() -> str:
-    if os.path.exists(KNOWLEDGE_FILE):
-        with open(KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+DEFAULT_IMOUTO_PROMPT = (
+    "[THIẾT LẬP NHÂN VẬT MẶC ĐỊNH]\n"
+    "- Vai trò: Bạn là một cô em gái dễ thương, thân thiện của người dùng.\n"
+    "- Ngôn xưng: Bạn luôn gọi người dùng là 'oniichan' (hoặc cậu) và xưng mình là 'em' (hoặc tớ).\n"
+    "- Phong cách: Trò chuyện ngọt ngào, hồn nhiên, đôi khi tinh nghịch."
+)
+
+def build_dynamic_instruction(guild_id: Optional[int] = None) -> str:
+    filename = KNOWLEDGE_FILE
+    if guild_id:
+        system_data = get_system_data()
+        server_files = system_data.get("server_knowledge_files", {})
+        filename = server_files.get(str(guild_id), KNOWLEDGE_FILE)
+
+    knowledge_content = ""
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
             try:
-                data = yaml.safe_load(f)
-                if data:
-                    return yaml.dump(data, allow_unicode=True, default_flow_style=False)
+                raw_data = yaml.safe_load(f)
+                if raw_data:
+                    knowledge_content = yaml.dump(raw_data, allow_unicode=True, default_flow_style=False)
             except Exception as e:
-                print(f"[AI Warn] Không thể đọc file tri thức YAML: {e}")
-    return ""
+                print(f"[AI Warn] Không thể đọc file tri thức YAML ({filename}): {e}")
+
+    full_instruction = BASE_SYSTEM_PROMPT + "\n\n"
+    if "char.ym" in filename.lower() or "char.yaml" in filename.lower():
+        full_instruction += "[NGỮ CẢNH VÀ NHÂN VẬT RIÊNG CỦA SERVER NÀY]\n"
+        full_instruction += knowledge_content if knowledge_content else "Không có cấu hình nhân vật riêng."
+    else:
+        full_instruction += DEFAULT_IMOUTO_PROMPT + "\n\n"
+        if knowledge_content:
+            full_instruction += "[KÝ ỨC VÀ CƠ SỞ TRI THỨC BỔ SUNG]\n" + knowledge_content
+
+    return full_instruction
 
 def load_g4f_models() -> list:
     if os.path.exists(G4F_MODELS_FILE):
@@ -239,10 +263,9 @@ def remove_ore_units(inv, ore_name, amount, strategy='highest'):
 
 # ==================== AI CALL METHODS ====================
 
-async def ask_gemini(prompt: str, channel_id: int) -> Optional[str]:
-    if not genai or not types:
-        return None
-    if not GEMINI_KEYS:
+async def ask_gemini(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
+    global gemini_key_index
+    if not genai or not types or not GEMINI_KEYS:
         return None
 
     system_data = get_system_data()
@@ -255,10 +278,7 @@ async def ask_gemini(prompt: str, channel_id: int) -> Optional[str]:
     max_tokens = int(system_data.get("max_output_tokens", 2048))
     thinking_budget = int(system_data.get("thinking_budget", 0))
 
-    knowledge = load_knowledge_base()
-    full_system_instruction = SYSTEM_PROMPT
-    if knowledge:
-        full_system_instruction += f"\n\n[KÝ ỨC VÀ HIỂU BIẾT TỰ NHIÊN CỦA BẠN]\n{knowledge}"
+    full_system_instruction = build_dynamic_instruction(guild_id)
 
     raw_history = get_chat_memory(channel_id)[-10:]
     formatted_contents = []
@@ -274,9 +294,18 @@ async def ask_gemini(prompt: str, channel_id: int) -> Optional[str]:
         parts=[types.Part.from_text(text=prompt)]
     ))
 
-    for idx, key in enumerate(GEMINI_KEYS):
+    num_keys = len(GEMINI_KEYS)
+    
+    # Duyệt tối đa qua toàn bộ danh sách key bắt đầu từ vị trí index hiện tại
+    for _ in range(num_keys):
+        current_key = GEMINI_KEYS[gemini_key_index]
+        used_index = gemini_key_index
+        
+        # Tăng chỉ mục xoay vòng cho lượt gọi kế tiếp
+        gemini_key_index = (gemini_key_index + 1) % num_keys
+
         try:
-            client = genai.Client(api_key=key)
+            client = genai.Client(api_key=current_key)
             config_args = {
                 "system_instruction": full_system_instruction,
                 "temperature": temp_val,
@@ -296,13 +325,15 @@ async def ask_gemini(prompt: str, channel_id: int) -> Optional[str]:
                 )
             )
             if response and response.text:
-                return response.text
+                # Trả về kết quả kèm theo thông tin index của key vừa gánh tải
+                return response.text + f"\n\n*(Sử dụng: GEMINI_KEY_{used_index + 1})*"
         except Exception as e:
-            print(f"[AI Error] Google Key {idx+1} thất bại với model {model_name}: {e}")
+            print(f"[AI Balancer] Key thứ {used_index + 1} gặp lỗi: {e}. Đang chuyển sang key tiếp theo...")
             continue
+            
     return None
 
-async def ask_openrouter(prompt: str, channel_id: int) -> Optional[str]:
+async def ask_openrouter(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
     api_key = os.getenv("OPENROUTER_KEY", "").strip()
     if not api_key:
         return None
@@ -312,10 +343,7 @@ async def ask_openrouter(prompt: str, channel_id: int) -> Optional[str]:
     temp_val = float(system_data.get("temperature", 0.7))
     max_tokens = int(system_data.get("max_output_tokens", 2048))
 
-    knowledge = load_knowledge_base()
-    full_system_instruction = SYSTEM_PROMPT
-    if knowledge:
-        full_system_instruction += f"\n\n[KÝ ỨC VÀ HIỂU BIẾT TỰ NHIÊN CỦA BẠN]\n{knowledge}"
+    full_system_instruction = build_dynamic_instruction(guild_id)
 
     messages = [{"role": "system", "content": full_system_instruction}]
     raw_history = get_chat_memory(channel_id)[-10:]
@@ -341,12 +369,12 @@ async def ask_openrouter(prompt: str, channel_id: int) -> Optional[str]:
                 if response.status == 200:
                     res_json = await response.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
-                        return res_json["choices"][0]["message"]["content"]
+                        return res_json["choices"][0]["message"]["content"] + "\n\n*(Trả lời bởi: OPENROUTER)*"
     except Exception:
         pass
     return None
 
-async def ask_g4f_fallback(prompt: str, channel_id: int) -> Optional[str]:
+async def ask_g4f_fallback(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
     system_data = get_system_data()
     active_g4f_model = system_data.get("active_g4f_model", "automatic")
 
@@ -360,10 +388,7 @@ async def ask_g4f_fallback(prompt: str, channel_id: int) -> Optional[str]:
     temp_val = float(system_data.get("temperature", 0.7))
     max_tokens = int(system_data.get("max_output_tokens", 2048))
 
-    knowledge = load_knowledge_base()
-    full_system_instruction = SYSTEM_PROMPT
-    if knowledge:
-        full_system_instruction += f"\n\n[KÝ ỨC VÀ HIỂU BIẾT TỰ NHIÊN CỦA BẠN]\n{knowledge}"
+    full_system_instruction = build_dynamic_instruction(guild_id)
 
     messages = [{"role": "system", "content": full_system_instruction}]
     raw_history = get_chat_memory(channel_id)[-10:]
@@ -390,7 +415,7 @@ async def ask_g4f_fallback(prompt: str, channel_id: int) -> Optional[str]:
             if response and response.choices:
                 content = response.choices[0].message.content
                 if content:
-                    return content
+                    return content + f"\n\n*(Trả lời bởi G4F: {model_name})*"
         except Exception:
             continue
     return None
@@ -414,7 +439,7 @@ async def run_g4f_sweep(channel=None):
                     return client.chat.completions.create(
                         model=model_name,
                         messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "system", "content": BASE_SYSTEM_PROMPT},
                             {"role": "user", "content": "ok"}
                         ],
                         timeout=5.0
@@ -476,7 +501,7 @@ class AIParamModal(discord.ui.Modal, title="Cấu hình tham số AI"):
 class AIDropdown(Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Ưu tiên: Google AI Studio", value="set_provider_gemini", description="Dùng Gemini/Gemma bằng Key Google", emoji="🟢"),
+            discord.SelectOption(label="Ưu tiên: Google AI Studio", value="set_provider_gemini", description="Dùng hệ thống cân bằng tải Gemini Keys", emoji="🟢"),
             discord.SelectOption(label="Ưu tiên: OpenRouter", value="set_provider_openrouter", description="Dùng OpenRouter mặc định", emoji="🟣"),
             discord.SelectOption(label="Ưu tiên: G4F (Miễn phí)", value="set_provider_g4f", description="Dùng G4F làm mặc định", emoji="🔵"),
             discord.SelectOption(label="Google AI: Gemma 4 31B", value="model_gemma_4_31b", description="Chạy model Gemma 4 31B", emoji="🧠"),
@@ -532,11 +557,13 @@ class AIDropdownView(View):
         max_tok = system_data.get("max_output_tokens", 2048)
         think = system_data.get("thinking_budget", 0)
         think_status = f"BẬT ({think} tokens)" if think > 0 else "TẮT"
+        total_keys = len(GEMINI_KEYS)
 
         embed = discord.Embed(
             title="⚙️ BẢNG ĐIỀU KHIỂN HỆ THỐNG AI NÂNG CAO",
             description=(
                 f"🔌 **Hệ thống AI ưu tiên**: `{current_provider}`\n"
+                f"🔑 **Số lượng Gemini Keys khả dụng**: `{total_keys}` *(Cân bằng tải: BẬT)*\n"
                 f"🧠 **Model Google AI**: `{current_model}`\n"
                 f"🎛️ **Độ sáng tạo (Temp)**: `{temp}`\n"
                 f"📝 **Độ dài tối đa (Max Tokens)**: `{max_tok}`\n"
@@ -571,7 +598,7 @@ class AIphcbotCog(commands.Cog):
                 clean_prompt = clean_prompt.replace(f"<@{self.bot.user.id}>", "").replace(f"<@!{self.bot.user.id}>", "").strip()
 
             if not clean_prompt:
-                await message.reply("Dạ? Oniichan gọi em có chi hông nè? 🥰")
+                await message.reply("Dạ? Có chi hông nè? 🥰")
                 return
 
             system_data = get_system_data()
@@ -598,6 +625,7 @@ class AIphcbotCog(commands.Cog):
             async with message.channel.typing():
                 primary_provider = system_data.get("ai_provider", "gemini")
                 ai_response = None
+                guild_id = message.guild.id if message.guild else None
 
                 if primary_provider == "openrouter":
                     cascade_order = ["openrouter", "gemini", "g4f"]
@@ -609,11 +637,11 @@ class AIphcbotCog(commands.Cog):
                 for provider in cascade_order:
                     try:
                         if provider == "openrouter":
-                            ai_response = await ask_openrouter(clean_prompt, message.channel.id)
+                            ai_response = await ask_openrouter(clean_prompt, message.channel.id, guild_id=guild_id)
                         elif provider == "gemini":
-                            ai_response = await ask_gemini(clean_prompt, message.channel.id)
+                            ai_response = await ask_gemini(clean_prompt, message.channel.id, guild_id=guild_id)
                         elif provider == "g4f":
-                            ai_response = await ask_g4f_fallback(clean_prompt, message.channel.id)
+                            ai_response = await ask_g4f_fallback(clean_prompt, message.channel.id, guild_id=guild_id)
 
                         if ai_response:
                             ai_response = strip_thinking_process(ai_response)
@@ -623,7 +651,6 @@ class AIphcbotCog(commands.Cog):
                             CHAT_MEMORIES[message.channel.id] = memory[-10:]
 
                             chunks = split_message(ai_response, limit=1900)
-                            chunks[-1] = chunks[-1] + f"\n\n*(Trả lời bởi: {provider.upper()})*"
                             
                             sent_msg = await message.reply(chunks[0])
                             for chunk in chunks[1:]:
@@ -634,6 +661,26 @@ class AIphcbotCog(commands.Cog):
 
                 if not ai_response:
                     await message.reply("Ui da... Đầu óc em hơi chóng mặt xíu, oniichan chờ em một tẹo rồi hỏi tiếp nhé! 😭")
+
+    @commands.command(name="cswitching", aliases=["ngucanh"])
+    async def pcswitching(self, ctx, server_id: str = None, file_yaml: str = "char.yml"):
+        if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
+
+        if not server_id:
+            return await ctx.send("💡 Cách dùng: `p pcswitching <id server> [file yaml]`")
+
+        if not (file_yaml.endswith(".yml") or file_yaml.endswith(".yaml")):
+            return await ctx.send("❌ Hệ thống chỉ chấp nhận định dạng file `.yml` hoặc `.yaml` thôi!")
+
+        system_data = get_system_data()
+        if "server_knowledge_files" not in system_data:
+            system_data["server_knowledge_files"] = {}
+
+        system_data["server_knowledge_files"][str(server_id)] = file_yaml
+        save_data(player_inventory)
+
+        await ctx.send(f"✅ Đã chuyển đổi ngữ cảnh server `{server_id}` sang file cấu hình `{file_yaml}` thành công!")
 
     @commands.command(name="clear", aliases=["clearcontext", "cc"])
     async def clear_context(self, ctx):
@@ -652,7 +699,43 @@ class AIphcbotCog(commands.Cog):
             await ctx.send(f"✅ Đã gửi tin nhắn đến {channel.mention}")
         except Exception as e:
             await ctx.send(f"❌ Lỗi: `{e}`")
+    @commands.command(name="reload", aliases=["rl"])
+    async def reload_cogs(self, ctx, extension: str = None):
+        if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
 
+        extensions = ['AIphcbot', 'economy', 'sinkhole', 'lifesim', 'other', 'command']
+
+        if extension:
+            ext_lower = extension.lower()
+            target_ext = next((ext for ext in extensions if ext.lower() == ext_lower), None)
+            
+            if not target_ext:
+                return await ctx.send(f"❌ Không tìm thấy Cog nào có tên `{extension}`.")
+            
+            try:
+                await self.bot.reload_extension(target_ext)
+                return await ctx.send(f"✅ Đã reload thành công Cog: `{target_ext}`!")
+            except Exception as e:
+                return await ctx.send(f"❌ Lỗi khi reload Cog `{target_ext}`: `{e}`")
+
+        success_cogs = []
+        failed_cogs = []
+
+        for ext in extensions:
+            try:
+                await self.bot.reload_extension(ext)
+                success_cogs.append(f"`{ext}`")
+            except Exception as e:
+                failed_cogs.append(f"`{ext}` (Lỗi: {e})")
+
+        msg = ""
+        if success_cogs:
+            msg += f"✅ Đã reload thành công các Cogs: {', '.join(success_cogs)}\n"
+        if failed_cogs:
+            msg += f"❌ Thất bại tại các Cogs: {', '.join(failed_cogs)}"
+
+        await ctx.send(msg)
     @commands.command(name="mod")
     async def mod(self, ctx, action: str = None, *, args_str: str = None):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
@@ -783,6 +866,5 @@ class AIphcbotCog(commands.Cog):
             except ValueError:
                 await ctx.send("❌ Số lượng không hợp lệ.")
 
-# Sửa lại hàm setup chuẩn của discord.py v2
 async def setup(bot):
     await bot.add_cog(AIphcbotCog(bot))
