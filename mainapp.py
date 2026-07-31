@@ -1,5 +1,6 @@
 # mainapp.py
 import os
+import json
 import datetime
 import dotenv
 import discord
@@ -19,11 +20,12 @@ OWNER_ID = 1135806949527670835
 SUBOWNER_ID = [1138020979348606996]
 WELCOME_CHANNEL_ID = 1297128688801808434
 
-# Cấu hình Intents tối đa phục vụ quản lý thành viên
+# Cấu hình Intents tối đa
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+
 
 class KatBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -31,8 +33,11 @@ class KatBot(commands.Bot):
 
     async def setup_hook(self):
         print("🛰️ [SYSTEM] Đang khởi động hệ thống Cogs...")
-        # Danh sách các Cogs hệ thống được cách ly hoàn toàn
-        extensions = ['AIphcbot', 'economy', 'sinkhole', 'lifesim', 'other','command']
+        extensions = [
+            'AIphcbot', 'economy', 'sinkhole', 
+            'lifesim', 'other', 'command', 
+            'pet', 'whoisspy','masoi'
+        ]
         
         for ext in extensions:
             try:
@@ -45,28 +50,59 @@ class KatBot(commands.Bot):
         
         print("⚙️ [SYSTEM] Tất cả các Cogs đã được đồng bộ hóa thành công!")
 
+
 bot = KatBot(command_prefix=['p', 'P'], case_insensitive=True, intents=intents)
 bot.remove_command('help')
 
-# ==================== BACKGROUND TASKS (LUỒNG CHẠY NGẦM) ====================
 
-@tasks.loop(minutes=15)
+# ==================== TÁC VỤ STATUS XOAY VÒNG ĐỘNG ====================
+
+@tasks.loop(minutes=2)
 async def update_watching_status():
-    """Tác vụ ngầm tự động đếm server và thành viên để hiển thị trạng thái cực chiến"""
+    """Tự động đếm số người trong data.json và xoay vòng Status hài hước"""
     await bot.wait_until_ready()
+
+    # 1. Đếm số người chơi thực tế trong data.json
+    real_user_count = 0
+    if os.path.exists('data.json'):
+        try:
+            with open('data.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Lọc bỏ SYSTEM_DATA, chỉ đếm User ID thực tế
+                real_user_count = len([k for k in data.keys() if k != "SYSTEM_DATA"])
+        except Exception:
+            pass
+
+    # 2. Đếm số Server và Tổng thành viên Discord
     guild_count = len(bot.guilds)
     member_count = sum(guild.member_count for guild in bot.guilds if guild.member_count)
-    
-    status_text = f"{guild_count} server và {member_count:,} thành viên"
+
+    # Biến đếm chỉ số vòng lặp
+    if not hasattr(update_watching_status, 'index'):
+        update_watching_status.index = 0
+
+    # 3. Danh sách các câu Status xoay vòng theo đúng yêu cầu
+    status_list = [
+        f"{guild_count} server và {member_count:,} thành viên",
+        f"{real_user_count:,} người ra chat em AI 🥰",
+        f"{real_user_count:,} người ra cầu ở (Tài Xỉu/Bầu Cua) 🎲",
+        "bot AI nhưng mà AI lạ lắm 🤡",
+        "ko bt bot này xài ntn | Gõ /phelp nha!"
+    ]
+
+    current_status = status_list[update_watching_status.index % len(status_list)]
+    update_watching_status.index += 1
+
     activity = discord.Activity(
         type=discord.ActivityType.watching,
-        name=status_text
+        name=current_status
     )
+
     try:
         await bot.change_presence(activity=activity)
-        print(f"📡 [PRESENCE] Đã cập nhật trạng thái động: Watching {status_text}")
+        print(f"📡 [PRESENCE] Cập nhật status: Watching '{current_status}'")
     except Exception as e:
-        print(f"❌ [PRESENCE ERROR] Không thể cập nhật trạng thái: {e}")
+        print(f"❌ [PRESENCE ERROR] Lỗi cập nhật status: {e}")
 
 
 @tasks.loop(minutes=10)
@@ -75,7 +111,7 @@ async def check_renew_server():
     try:
         from AIphcbot import get_system_data, save_data, player_inventory
     except ImportError:
-        return # Bỏ qua nếu file AIphcbot chưa sẵn sàng
+        return
 
     system_data = get_system_data()
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -85,7 +121,6 @@ async def check_renew_server():
         next_time = now + datetime.timedelta(days=7)
         system_data["next_renew_time"] = next_time.isoformat()
         save_data(player_inventory)
-        print(f"⏰ [RENEWAL] Đã khởi tạo mốc nhắc gia hạn server mới: {next_time}")
         return
 
     try:
@@ -103,7 +138,7 @@ async def check_renew_server():
             mentions = f"<@{OWNER_ID}> " + " ".join([f"<@{sid}>" for sid in SUBOWNER_ID])
             embed = discord.Embed(
                 title="🚨 BÁO ĐỘNG GIA HẠN SERVER 🚨",
-                description="Đã đến mốc gia hạn VPS! Mau vào panel gia hạn (renew) server ngay kẻo bị tắt máy mất dữ liệu!\n\n*(Gia hạn xong nhớ gõ lệnh `p renewed` để bot reset lại bộ đếm nhé)*",
+                description="Đã đến mốc gia hạn VPS! Mau vào panel gia hạn server ngay kẻo bị tắt máy mất dữ liệu!\n\n*(Gia hạn xong gõ lệnh `p renewed` hoặc `/renewed` để reset bộ đếm nhé)*",
                 color=discord.Color.red()
             )
             embed.set_thumbnail(url="https://media.giphy.com/media/l41YkFIiBxQdRlvwc/giphy.gif")
@@ -116,41 +151,39 @@ async def check_renew_server():
         system_data["next_renew_time"] = new_next_time.isoformat()
         save_data(player_inventory)
 
-# ==================== BOT EVENTS (SỰ KIỆN CHÍNH) ====================
+
+# ==================== BOT EVENTS ====================
 
 @bot.event
 async def on_message(message):
-    # Tránh xử lý lệnh lặp thừa
     await bot.process_commands(message)
 
 
 @bot.event
 async def on_ready():
     print("==================================================")
-    print(f"🌟 KatBot đã trực tuyến thành công!")
+    print(f"🌟 KatBot / phc bot đã trực tuyến thành công!")
     print(f"🤖 Đăng nhập dưới tên: {bot.user}")
     print(f"🔑 Bot ID: {bot.user.id}")
     print("==================================================")
     
+    # Đồng bộ Slash Command Tree lên Discord để hiển thị nút Lệnh trên Hồ sơ Bot
     try:
-        await bot.tree.sync()
-        print("⚡ App Command Tree (Slash Commands) đã đồng bộ xong.")
+        synced = await bot.tree.sync()
+        print(f"⚡ App Command Tree (Slash Commands) đã đồng bộ thành công {len(synced)} lệnh.")
     except Exception as e:
         print(f"❌ Lỗi đồng bộ Slash Commands: {e}")
 
-    # Khởi chạy toàn bộ luồng tác vụ ngầm tự động
+    # Khởi chạy các luồng ngầm
     if not update_watching_status.is_running():
         update_watching_status.start()
-        print("📡 Task: Cập nhật trạng thái Watching động -> [RUNNING]")
 
     if not check_renew_server.is_running():
         check_renew_server.start()
-        print("⏰ Task: Theo dõi gia hạn VPS tự động -> [RUNNING]")
 
 
 @bot.event
 async def on_command_error(ctx, error):
-    # Bỏ qua các lỗi spam lệnh hoặc lệnh không tồn tại để tránh rác Terminal
     if isinstance(error, (commands.CommandNotFound, commands.CommandOnCooldown)):
         return
     raise error

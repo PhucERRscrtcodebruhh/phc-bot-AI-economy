@@ -5,7 +5,29 @@
 
 KESLING_ICON = "<:kesling:1434181800539979848>" 
 
-# Bể cá độc quyền 15 loại cá
+
+price['kesling_stone'] = 250 
+
+
+emoji_icon['kesling_stone'] = '<:keslings_stone:1433843943405125725>'
+
+# Định nghĩa cửa hàng Thú Cưng
+PET_SHOP = {
+    "meo_than_tai": {
+        "name": "Mèo Thần Tài",
+        "emoji": "🐱",
+        "price": 50000,
+        "description": "Tự động nhặt 1-2 Kesling Coin mỗi 5 phút."
+    },
+    "ca_kesling": {
+        "name": "Cá Kesling",
+        "emoji": "🐟✨",
+        "price": 200000,
+        "description": "Mỗi 1 tiếng đào 1 quặng ngẫu nhiên (10% ra 20~100 Kesling Stone)."
+    }
+}
+
+
 FISH_POOL = {
     "common": {
         "ca_ro": {"price": 15, "emoji": "🐟", "name": "Cá Rô"},

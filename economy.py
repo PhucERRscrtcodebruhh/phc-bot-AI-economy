@@ -1,7 +1,8 @@
-
+# economy.py
 import random
 import datetime
 import discord
+from discord import app_commands
 from discord.ext import commands
 from discord.ui import View
 
@@ -95,7 +96,7 @@ class WorkSelectionView(View):
         
         if inv.get('ruong', 0) <= 0:
             return await interaction.response.send_message(
-                "🚫 **Oniichan chưa có ruộng!** Hãy vào `p shop buy ruong` để mua đất canh tác trước khi làm nông nha.", 
+                "🚫 **Oniichan chưa có ruộng!** Hãy vào `/shop buy item_name: ruong` để mua đất canh tác trước khi làm nông nha.", 
                 ephemeral=True
             )
 
@@ -129,7 +130,7 @@ class WorkSelectionView(View):
                 
                 title = f"🎉 Thu hoạch thành công: {crop_name.capitalize()}"
                 desc = f"Ruộng lúa trĩu bông! Oniichan đã thu hoạch được **{yield_qty}x {crop_info['emoji']} {crop_name}**."
-                field_val = f"Sản phẩm đã được cất vào túi (`p bag`). Oniichan có thể đem bán bằng lệnh `p sell {crop_name} all` nha!"
+                field_val = f"Sản phẩm đã được cất vào túi (`/bag`). Oniichan có thể đem bán bằng lệnh `/sell {crop_name} all` nha!"
                 await self._finalize(interaction, title, desc, [("Kết quả", field_val)])
 
     @discord.ui.button(label="📊 Kế toán", style=discord.ButtonStyle.success)
@@ -145,7 +146,7 @@ class EconomyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="mine")
+    @commands.hybrid_command(name="mine", description="Đào mỏ để khai thác quặng tài nguyên")
     @commands.cooldown(rate=1, per=15, type=commands.BucketType.user)
     async def mine(self, ctx):
         user_id = str(ctx.author.id)
@@ -181,7 +182,6 @@ class EconomyCog(commands.Cog):
             final_amount = 1
 
         emoji = emoji_icon.get(found_ore, "")
-        original_weight_check = ore.get(found_ore, 0)
 
         if found_ore in ('dirt', 'stone'):
             quality_percent = 100
@@ -205,7 +205,7 @@ class EconomyCog(commands.Cog):
         if isinstance(error, commands.CommandOnCooldown):
             await ctx.send(f"⏳ **{ctx.author.mention}**, đợi **{error.retry_after:.1f} giây** nữa.")
 
-    @commands.command(name="pwork")
+    @commands.hybrid_command(name="pwork", description="Thực hiện công việc vi mô để kiếm tiền Kesling")
     @commands.cooldown(rate=1, per=1800, type=commands.BucketType.user)
     async def pwork(self, ctx):
         user_id = str(ctx.author.id)
@@ -230,7 +230,7 @@ class EconomyCog(commands.Cog):
         if isinstance(error, commands.CommandOnCooldown):
             await ctx.send(f"⏳ **{ctx.author.mention}**, oniichan nghỉ ngơi tí đi! Đợi **{error.retry_after/60:.1f} phút** nữa nha. 🥰")
 
-    @commands.group(name="shop", invoke_without_command=True)
+    @commands.hybrid_group(name="shop", fallback="list", description="Xem hoặc mua dụng cụ khai thác trong cửa hàng")
     async def shop(self, ctx):
         embed = discord.Embed(title="🛍️ Cửa Hàng Cuốc Đào (Pickaxe Shop)", color=discord.Color.gold())
         item_list = ""
@@ -239,22 +239,23 @@ class EconomyCog(commands.Cog):
                 continue
             emoji = emoji_icon.get(name, "❓")
             alias_name = next((vn_name for vn_name, key in PICKAXE_ALIASES.items() if key == name), name)
-            item_list += f"**{emoji} {name.upper()}**\n> Price: {props['price']:,} {KESLING_ICON} | Buy: `shop buy {alias_name}`\n\n"
+            item_list += f"**{emoji} {name.upper()}**\n> Price: {props['price']:,} {KESLING_ICON} | Buy: `/shop buy item_name: {alias_name}`\n\n"
         embed.add_field(name="⛏️ Danh Sách Cuốc Đào", value=item_list, inline=False)
         
         job_items = (
-            f"**🚜 RUỘNG ĐẤT**: {price['ruong']:,} {KESLING_ICON} (Mua: `shop buy ruong`)\n"
-            f"**📚 GIÁO ÁN**: {price['giao_an']:,} {KESLING_ICON} (Mua: `shop buy  giaoan`)\n"
-            f"**🔧 BỘ DỤNG CỤ**: {price['bo_dung_cu']:,} {KESLING_ICON} (Mua: `shop buy  bodungcu`)\n"
-            f"**🩺 TÚI Y TẾ**: {price['tui_y_te']:,} {KESLING_ICON} (Mua: `shop buy  tuiyte`)\n"
+            f"**🚜 RUỘNG ĐẤT**: {price['ruong']:,} {KESLING_ICON} (Mua: `/shop buy item_name: ruong`)\n"
+            f"**📚 GIÁO ÁN**: {price['giao_an']:,} {KESLING_ICON} (Mua: `/shop buy item_name: giaoan`)\n"
+            f"**🔧 BỘ DỤNG CỤ**: {price['bo_dung_cu']:,} {KESLING_ICON} (Mua: `/shop buy item_name: bodungcu`)\n"
+            f"**🩺 TÚI Y TẾ**: {price['tui_y_te']:,} {KESLING_ICON} (Mua: `/shop buy item_name: tuiyte`)\n"
         )
         embed.add_field(name="💼 Đồ Nghề Kinh Doanh", value=job_items, inline=False)
         await ctx.send(embed=embed)
 
-    @shop.command(name="buy")
+    @shop.command(name="buy", description="Mua một vật phẩm hoặc cuốc từ cửa hàng")
+    @app_commands.describe(item_name="Tên vật phẩm hoặc tên viết tắt (vd: cupgo, ruong, giaoan)")
     async def shop_buy(self, ctx, item_name: str = None):
         if item_name is None:
-            return await ctx.send("❌ Ví dụ: `p shop buy cuocgo`")
+            return await ctx.send("❌ Ví dụ sử dụng: `/shop buy item_name: cupgo` hoặc `p shop buy cuocgo`")
         
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)
@@ -281,7 +282,8 @@ class EconomyCog(commands.Cog):
         emoji = emoji_icon.get(item_key, "❓")
         await ctx.send(f"✅ Bạn đã mua thành công **{emoji} {item_key}** với giá **{item_price:,} {KESLING_ICON}**!")
 
-    @commands.command(name="bag")
+    @commands.hybrid_command(name="bag", description="Xem kho tài nguyên và số dư ví tiền")
+    @app_commands.describe(member="Thành viên cần xem túi (để trống nếu muốn xem túi của mình)")
     async def bag(self, ctx, member: discord.Member = None):
         target = member or ctx.author
         user_id = str(target.id)
@@ -311,12 +313,13 @@ class EconomyCog(commands.Cog):
                 line = f"{emoji} **{display_name}**\n> **Số lượng**: {amount:,}"
             ore_lines.append(line)
             
-        await send_paginated_via_ctx(ctx, f"Chi Tiết Kho Tài Nguyên", ore_lines, per_page=7)
+        await send_paginated_via_ctx(ctx, "Chi Tiết Kho Tài Nguyên", ore_lines, per_page=7)
 
-    @commands.command(name="sell")
+    @commands.hybrid_command(name="sell", description="Bán quặng, nông sản hoặc sản phẩm lấy tiền Kesling")
+    @app_commands.describe(ore_type="Tên quặng/vật phẩm (vd: iron, wheat, ca_ro)", quantity_to_sell="Số lượng hoặc 'all'")
     async def sell(self, ctx, ore_type: str = None, quantity_to_sell: str = None):
         if ore_type is None or quantity_to_sell is None:
-            return await ctx.send(f"{ctx.author.mention} dùng: `psell <tên quặng> <số lượng/all>`")
+            return await ctx.send(f"{ctx.author.mention} cú pháp sử dụng: `/sell ore_type: iron quantity_to_sell: all` hoặc `psell <tên quặng> <số lượng/all>`")
             
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)
@@ -352,7 +355,7 @@ class EconomyCog(commands.Cog):
         save_data(player_inventory)
         await ctx.send(f"✅ {ctx.author.mention} đã bán thành công **{amount_to_sell}x {ore_type}** ({', '.join(parts)}) lấy **{total_price:,} {KESLING_ICON}**!")
 
-    @commands.command(name="listore")
+    @commands.hybrid_command(name="listore", description="Xem danh sách các loại quặng khai thác được")
     async def listore(self, ctx):
         ore_items = []
         for k, weight in sorted(ore.items(), key=lambda item: item[1], reverse=True):
@@ -361,7 +364,8 @@ class EconomyCog(commands.Cog):
             ore_items.append(f"{emoji} **{k}** (Trọng số: {weight} | Giá: {base_price:,} {KESLING_ICON})")
         await send_paginated_via_ctx(ctx, "Danh Sách Quặng Có Thể Khai Thác", ore_items, per_page=15)
 
-    @commands.command(name="luyenkim")
+    @commands.hybrid_command(name="luyenkim", description="Luyện nung quặng thành thỏi kim loại thành phẩm")
+    @app_commands.describe(ore_name="Tên quặng muốn nung (vd: iron, copper, gold_ore)", qty="Số lượng muốn nung hoặc 'all'")
     async def luyenkim(self, ctx, ore_name: str = None, qty: str = "1"):
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)
@@ -374,8 +378,7 @@ class EconomyCog(commands.Cog):
         }
         
         if ore_name is None:
-            # Luyện kim nhanh không nhập tham số:
-            return await ctx.send("💡 Dùng lệnh: `p luyenkim <tên_quặng> <số_lượng/all>` để bắt đầu nung.")
+            return await ctx.send("💡 Sử dụng: `/luyenkim ore_name: iron qty: 5` hoặc `p luyenkim <tên_quặng> <số_lượng/all>` để bắt đầu nung.")
             
         ore_key = ore_name.lower()
         if ore_key not in smelt_map_data:
@@ -432,7 +435,8 @@ class EconomyCog(commands.Cog):
             embed.add_field(name="Xỉ hàn thất bại", value=f"⚠️ **{slag_count}x** {emoji_icon.get('slag', '')} slag (xỉ)")
         await ctx.send(embed=embed)
 
-    @commands.command(name="taiche")
+    @commands.hybrid_command(name="taiche", description="Tái chế xỉ hàn (slag) thành kim loại ngẫu nhiên")
+    @app_commands.describe(qty="Số lượt tái chế (mỗi lượt tốn 10 slag) hoặc 'all'")
     async def taiche(self, ctx, qty: str = '1'):
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)

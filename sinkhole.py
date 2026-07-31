@@ -1,15 +1,20 @@
+# sinkhole.py
 import asyncio
 import random
 import string
 import html
 import datetime
+import re
 import discord
 from discord.ext import commands
+from discord import app_commands
 from discord.ui import View, TextInput, Modal
-import re 
 
 from constants import KESLING_ICON, FISH_POOL, price, emoji_icon, DICE_EMOJIS, BAUCUA_MAP
 from AIphcbot import get_user_data, save_data, load_quiz_questions, player_inventory, owner_id, subowner_id
+
+
+# ==================== MODALS & VIEWS ====================
 
 class LobbyDirectBetModal(Modal, title="Xác nhận tiền cược"):
     amount_input = TextInput(label="Số tiền muốn cược", placeholder="Ví dụ: 10k, 5m, 10000", required=True)
@@ -31,7 +36,7 @@ class LobbyDirectBetModal(Modal, title="Xác nhận tiền cược"):
             return await interaction.response.send_message("❌ Số tiền cược không hợp lệ.", ephemeral=True)
 
         if bet_amount > 10000000:
-            return await interaction.response.send_message("❌ Tiền cược Tài Xỉu tối đa là **10,000,000**!", ephemeral=True)
+            return await interaction.response.send_message("❌ Tiền cược Tài Xỉu tối đa là **10,000,000** (10m)!", ephemeral=True)
 
         player = get_user_data(user_id)
         current_money = player.get("money", 0)
@@ -78,13 +83,13 @@ class LobbyNumberBetModal(Modal, title="Cược Số Chính Xác (3-18)"):
             return await interaction.response.send_message("❌ Số tiền cược không hợp lệ.", ephemeral=True)
 
         if bet_amount > 10000000:
-            return await interaction.response.send_message("❌ Tiền cược Tài Xỉu tối đa là **10,000,000**!", ephemeral=True)
+            return await interaction.response.send_message("❌ Tiền cược Tài Xỉu tối đa là **10,000,000** (10m)!", ephemeral=True)
 
         player = get_user_data(user_id)
         current_money = player.get("money", 0)
 
         if bet_amount > current_money:
-            return await interaction.response.send_message(f"❌ Bạn không đủ tiền!", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không đủ tiền!", ephemeral=True)
 
         player["money"] -= bet_amount
         save_data(player_inventory)
@@ -124,11 +129,12 @@ class TaiXiuLobbyView(View):
                 "• **Cược số cụ thể:**\n"
                 "  > `10, 11`: **x6** | `9, 12`: **x7** | `8, 13`: **x8** | `7, 14`: **x12**\n"
                 "  > `6, 15`: **x15** | `5, 16`: **x20** | `4, 17`: **x50** | `3, 18`: **x150**\n\n"
+                "⚠️ *Cược tối đa:* **10,000,000** (10m)\n"
                 f"🆔 **ID Phiên:** `{self.session_id}`"
             ),
             color=discord.Color.purple()
         )
-        lobby_display = "\n".join([f"• **{i['display_name']}**: cược **{i['amount']:}** {KESLING_ICON} vào **{str(i['choice']).upper()}**" for i in self.active_bets.values()]) if self.active_bets else "*Chưa có ai đặt cược.*"
+        lobby_display = "\n".join([f"• **{i['display_name']}**: cược **{i['amount']:,}** {KESLING_ICON} vào **{str(i['choice']).upper()}**" for i in self.active_bets.values()]) if self.active_bets else "*Chưa có ai đặt cược.*"
         embed.add_field(name="👥 Danh Sách Đặt Cược", value=lobby_display, inline=False)
         
         if time_remaining is not None:
@@ -184,13 +190,13 @@ class BaucuaBetModal(Modal, title="Đặt Cược Bầu Cua"):
             return await interaction.response.send_message("❌ Số tiền cược không hợp lệ.", ephemeral=True)
 
         if bet_amount > 10000000:
-            return await interaction.response.send_message("❌ Tiền cược Bầu Cua tối đa là **10,000,000**!", ephemeral=True)
+            return await interaction.response.send_message("❌ Tiền cược Bầu Cua tối đa là **10,000,000** (10m)!", ephemeral=True)
 
         player = get_user_data(user_id)
         current_money = player.get("money", 0)
 
         if bet_amount > current_money:
-            return await interaction.response.send_message(f"❌ Bạn không đủ tiền!", ephemeral=True)
+            return await interaction.response.send_message("❌ Bạn không đủ tiền!", ephemeral=True)
 
         player["money"] -= bet_amount
         save_data(player_inventory)
@@ -229,11 +235,12 @@ class BaucuaLobbyView(View):
                 "• Đoán trúng 1 hình: `x2` tiền cược (hoàn vốn + thắng x1)\n"
                 "• Đoán trúng 2 hình: `x3` tiền cược (hoàn vốn + thắng x2)\n"
                 "• Đoán trúng 3 hình: `x4` tiền cược (hoàn vốn + thắng x3)\n\n"
+                "⚠️ *Cược tối đa:* **10,000,000** (10m)\n"
                 f"🆔 **ID Phiên:** `{self.session_id}`"
             ),
             color=discord.Color.green()
         )
-        lobby_display = "\n".join([f"• **{i['display_name']}**: cược **{i['amount']:}** {KESLING_ICON} vào {BAUCUA_MAP[i['choice']]['emoji']} **{BAUCUA_MAP[i['choice']]['name']}**" for i in self.active_bets.values()]) if self.active_bets else "*Chưa có ai đặt cược.*"
+        lobby_display = "\n".join([f"• **{i['display_name']}**: cược **{i['amount']:,}** {KESLING_ICON} vào {BAUCUA_MAP[i['choice']]['emoji']} **{BAUCUA_MAP[i['choice']]['name']}**" for i in self.active_bets.values()]) if self.active_bets else "*Chưa có ai đặt cược.*"
         embed.add_field(name="👥 Danh Sách Đặt Cược", value=lobby_display, inline=False)
         
         if time_remaining is not None:
@@ -280,11 +287,12 @@ class RussianRouletteJoinView(View):
         embed = discord.Embed(
             title="🔫 SẢNH CÒ QUAY NGA (DEATHMATCH) 🔫",
             description=(
-                f"**Mức cược tham gia bắt buộc:** **{self.bet_amount:}** {KESLING_ICON}\n"
+                f"**Mức cược tham gia bắt buộc:** **{self.bet_amount:,}** {KESLING_ICON}\n"
                 "**Luật chơi:**\n"
                 "• Toàn bộ người chơi sẽ đặt cược cùng số tiền.\n"
                 "• Sảnh chờ kết thúc, người chơi sẽ bấm nút bóp cò tuần tự theo lượt.\n"
                 "• Người bị bắn trúng sẽ bị loại. Người sống sót cuối cùng ăn trọn quỹ thưởng!\n\n"
+                "⚠️ *Mức cược phòng tối đa:* **50,000** (50k)\n"
                 f"🆔 **ID Phiên:** `{self.session_id}`"
             ),
             color=discord.Color.red()
@@ -316,11 +324,12 @@ class RussianRouletteJoinView(View):
         save_data(player_inventory)
 
         self.players[user_id] = interaction.user.display_name
-        await interaction.response.send_message(f"✅ Cậu gia nhập sảnh tử thần thành công!", ephemeral=True)
+        await interaction.response.send_message("✅ Cậu gia nhập sảnh tử thần thành công!", ephemeral=True)
         try:
             await self.message.edit(embed=self.generate_embed(time_remaining=None))
         except Exception:
             pass
+
 
 class RussianRouletteGameView(View):
     def __init__(self, duel_list, original_players_dict, bet_amount, session_id):
@@ -335,7 +344,7 @@ class RussianRouletteGameView(View):
         self.step = 0
         self.logs = [
             f"🔥 **Trận đấu súng bắt đầu!** Tổng số đấu sĩ: {len(duel_list)}",
-            f"🔫 Viên đạn chết chóc đã nằm trong 1 trong 6 ổ đạn."
+            "🔫 Viên đạn chết chóc đã nằm trong 1 trong 6 ổ đạn."
         ]
 
     def get_current_player_id(self):
@@ -481,7 +490,7 @@ class DifficultyView(View):
         self.stop()
         await interaction.response.defer()
 
-    @discord.ui.button(label="Trung Binh", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Trung Bình", style=discord.ButtonStyle.primary)
     async def medium(self, interaction: discord.Interaction, button: discord.Button):
         self._disable_all()
         self.difficulty = "medium"
@@ -637,6 +646,8 @@ class SnakeGameView(View):
         await interaction.response.defer()
 
 
+# ==================== COG MODULE ====================
+
 class SinkholeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -680,7 +691,11 @@ class SinkholeCog(commands.Cog):
                 with open(file_name_gt, "a", encoding="utf-8") as f:
                     f.write(f"{color_label},{timestamp}\n")
 
-    @commands.command(name="checkseed", aliases=["tkseed", "thongke", "pthongke","tk"])
+    @commands.hybrid_command(
+        name="checkseed",
+        aliases=["tkseed", "thongke", "pthongke", "tk"],
+        description="Xem thống kê lịch sử xúc xắc Tài Xỉu trong kênh hiện tại"
+    )
     async def check_seed_command(self, ctx):
         file_name = f"dice_data_{ctx.channel.id}.txt"
         try:
@@ -762,7 +777,11 @@ class SinkholeCog(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="thongkegt", aliases=["tkgt", "pkgt"])
+    @commands.hybrid_command(
+        name="thongkegt",
+        aliases=["tkgt", "pkgt"],
+        description="Xem thống kê lịch sử Đèn Giao Thông trong kênh hiện tại"
+    )
     async def thong_ke_giao_thong_command(self, ctx):
         file_name = f"gt_data_{ctx.channel.id}.txt"
         try:
@@ -832,7 +851,11 @@ class SinkholeCog(commands.Cog):
         
         await ctx.send(embed=embed)
         
-    @commands.command(name="taixiu", aliases=["tx"])
+    @commands.hybrid_command(
+        name="taixiu",
+        aliases=["tx"],
+        description="Mở sảnh cược Tài Xỉu cho cả kênh cùng tham gia"
+    )
     async def taixiu_command(self, ctx):
         session_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
         
@@ -957,7 +980,11 @@ class SinkholeCog(commands.Cog):
 
         await msg.edit(embed=result_embed, view=None)
 
-    @commands.command(name="baucua", aliases=["bc"])
+    @commands.hybrid_command(
+        name="baucua",
+        aliases=["bc"],
+        description="Mở sảnh cược Bầu Cua Tôm Cá cho cả kênh cùng tham gia"
+    )
     async def baucua_command(self, ctx):
         session_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
         view = BaucuaLobbyView(ctx.author, session_id)
@@ -1025,10 +1052,15 @@ class SinkholeCog(commands.Cog):
 
         await msg.edit(embed=result_embed, view=None)
 
-    @commands.command(name="coquay", aliases=["pcr", "roulette"])
+    @commands.hybrid_command(
+        name="coquay",
+        aliases=["pcr", "roulette"],
+        description="Mở sảnh đấu súng Cò Quay Nga sinh tử (Russian Roulette)"
+    )
+    @app_commands.describe(bet_amount_str="Số tiền cược tham gia sảnh (Ví dụ: 10k, 50k, 50000)")
     async def coquay_command(self, ctx, bet_amount_str: str = None):
         if bet_amount_str is None:
-            return await ctx.send("❌ Dùng lệnh: `p coquay <số_tiền_cược>` để thiết lập phòng chơi.")
+            return await ctx.send("❌ Dùng lệnh: `/coquay <số_tiền_cược>` hoặc `p coquay <số_tiền_cược>` để thiết lập phòng chơi.")
 
         from other import parse_amount
         bet_amount = parse_amount(bet_amount_str)
@@ -1036,8 +1068,8 @@ class SinkholeCog(commands.Cog):
         if bet_amount <= 0:
             return await ctx.send("❌ Số tiền cược không hợp lệ.")
 
-        if bet_amount > 100000000:
-            return await ctx.send("❌ Tiền cược Cò Quay tối đa là **100,000,000** (100m)!")
+        if bet_amount > 50000:
+            return await ctx.send("❌ Tiền cược Cò Quay tối đa là **50,000** (50k)!")
 
         user_id = str(ctx.author.id)
         player_data = get_user_data(user_id)
@@ -1136,7 +1168,10 @@ class SinkholeCog(commands.Cog):
         final_embed.set_footer(text=f"Phiên đấu: {session_id} | Hoàn tất.")
         await msg.channel.send(embed=final_embed)
 
-    @commands.command(name="trieuphu")
+    @commands.hybrid_command(
+        name="trieuphu",
+        description="Thử thách trí tuệ với game Ai Là Triệu Phú để săn tiền thưởng"
+    )
     @commands.cooldown(rate=1, per=60, type=commands.BucketType.user)
     async def trieuphu(self, ctx):
         user_id = str(ctx.author.id)
@@ -1159,7 +1194,7 @@ class SinkholeCog(commands.Cog):
         all_quiz_data = load_quiz_questions()
         category_questions = all_quiz_data.get(diff_view.difficulty, [])
         if not category_questions:
-            return await diff_msg.edit(content=f"❌ Không tìm thấy bộ câu hỏi cho độ khó này.", view=None)
+            return await diff_msg.edit(content="❌ Không tìm thấy bộ câu hỏi cho độ khó này.", view=None)
 
         random.shuffle(category_questions)
         questions_data = category_questions[:10]
@@ -1212,7 +1247,7 @@ class SinkholeCog(commands.Cog):
                 break
 
         final_result_embed = discord.Embed(
-            title=f"🏆 TRẬN ĐẤU TRIỆU PHÚ KẾT THÚC 🏆",
+            title="🏆 TRẬN ĐẤU TRIỆU PHÚ KẾT THÚC 🏆",
             description="",
             color=discord.Color.gold() if won_amount > 0 else discord.Color.red()
         )
@@ -1227,7 +1262,11 @@ class SinkholeCog(commands.Cog):
         final_result_embed.set_footer(text=f"ID Phiên: {session_id}")
         await ctx.send(embed=final_result_embed)
 
-    @commands.command(name="cauca", aliases=["pcauca", "fishing"])
+    @commands.hybrid_command(
+        name="cauca",
+        aliases=["pcauca", "fishing"],
+        description="Thả cần câu cá giải trí kiếm nguyên liệu cá"
+    )
     @commands.cooldown(rate=1, per=300, type=commands.BucketType.user)
     async def cauca_command(self, ctx):
         user_id = str(ctx.author.id)
@@ -1278,7 +1317,11 @@ class SinkholeCog(commands.Cog):
         embed.set_footer(text="Gõ 'p sell <tên_cá> all' để bán cá lấy tiền")
         await ctx.send(embed=embed)
 
-    @commands.command(name="snake", aliases=["ransanmoi"])
+    @commands.hybrid_command(
+        name="snake",
+        aliases=["ransanmoi"],
+        description="Chơi trò chơi Rắn Săn Mồi Console trực tiếp trong Discord"
+    )
     async def snake_command(self, ctx):
         view = SnakeGameView(ctx.author, KESLING_ICON)
         embed = view.generate_render()
@@ -1286,10 +1329,13 @@ class SinkholeCog(commands.Cog):
         view.message = msg
         await view.start_loop() 
 
-    @commands.command(name="renewed")
+    @commands.hybrid_command(
+        name="renewed",
+        description="Reset bộ đếm nhắc nhở gia hạn máy chủ VPS (Chỉ dành cho Admin)"
+    )
     async def renewed_command(self, ctx):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
-            return await ctx.send("❌ Oniichan hông có quyền gọi lệnh này đâu nè!")
+            return await ctx.send("❌ Oniichan hông có quyền gọi lệnh này đâu nè!", ephemeral=True)
             
         from AIphcbot import get_system_data
         system_data = get_system_data()
@@ -1306,6 +1352,7 @@ class SinkholeCog(commands.Cog):
             minutes = int(error.retry_after // 60)
             seconds = int(error.retry_after % 60)
             await ctx.send(f"⏳ **{ctx.author.mention}**, đợi **{minutes} phút {seconds} giây** nữa để thả cần tiếp nha! 🥰")
+
 
 async def setup(bot):
     await bot.add_cog(SinkholeCog(bot))

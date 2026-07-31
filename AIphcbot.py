@@ -9,6 +9,7 @@ import random
 import html
 import discord
 from typing import Optional
+from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, TextInput, Modal, Select
 from dotenv import load_dotenv
@@ -296,12 +297,9 @@ async def ask_gemini(prompt: str, channel_id: int, guild_id: Optional[int] = Non
 
     num_keys = len(GEMINI_KEYS)
     
-    # Duyệt tối đa qua toàn bộ danh sách key bắt đầu từ vị trí index hiện tại
     for _ in range(num_keys):
         current_key = GEMINI_KEYS[gemini_key_index]
         used_index = gemini_key_index
-        
-        # Tăng chỉ mục xoay vòng cho lượt gọi kế tiếp
         gemini_key_index = (gemini_key_index + 1) % num_keys
 
         try:
@@ -325,7 +323,6 @@ async def ask_gemini(prompt: str, channel_id: int, guild_id: Optional[int] = Non
                 )
             )
             if response and response.text:
-                # Trả về kết quả kèm theo thông tin index của key vừa gánh tải
                 return response.text + f"\n\n*(Sử dụng: GEMINI_KEY_{used_index + 1})*"
         except Exception as e:
             print(f"[AI Balancer] Key thứ {used_index + 1} gặp lỗi: {e}. Đang chuyển sang key tiếp theo...")
@@ -662,13 +659,21 @@ class AIphcbotCog(commands.Cog):
                 if not ai_response:
                     await message.reply("Ui da... Đầu óc em hơi chóng mặt xíu, oniichan chờ em một tẹo rồi hỏi tiếp nhé! 😭")
 
-    @commands.command(name="cswitching", aliases=["ngucanh"])
+    @commands.hybrid_command(
+        name="cswitching", 
+        aliases=["ngucanh"], 
+        description="Chuyển đổi file tri thức/ngữ cảnh AI cho máy chủ hiện tại (Chỉ Admin)"
+    )
+    @app_commands.describe(
+        server_id="ID của máy chủ Discord", 
+        file_yaml="Tên file cấu hình YAML (mặc định char.yml)"
+    )
     async def pcswitching(self, ctx, server_id: str = None, file_yaml: str = "char.yml"):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
-            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.", ephemeral=True)
 
         if not server_id:
-            return await ctx.send("💡 Cách dùng: `p pcswitching <id server> [file yaml]`")
+            return await ctx.send("💡 Cách dùng: `/cswitching server_id: <id_server> file_yaml: <file_yaml>`")
 
         if not (file_yaml.endswith(".yml") or file_yaml.endswith(".yaml")):
             return await ctx.send("❌ Hệ thống chỉ chấp nhận định dạng file `.yml` hoặc `.yaml` thôi!")
@@ -682,27 +687,44 @@ class AIphcbotCog(commands.Cog):
 
         await ctx.send(f"✅ Đã chuyển đổi ngữ cảnh server `{server_id}` sang file cấu hình `{file_yaml}` thành công!")
 
-    @commands.command(name="clear", aliases=["clearcontext", "cc"])
+    @commands.hybrid_command(
+        name="clear", 
+        aliases=["clearcontext", "cc"], 
+        description="Xóa sạch lịch sử trò chuyện (memory) của AI trong kênh này"
+    )
     async def clear_context(self, ctx):
         clear_chat_memory(ctx.channel.id)
         await ctx.send("🧹 **Oniichan!** Em đã dọn dẹp sạch sẽ lịch sử trò chuyện trong kênh này rồi đó! ✨")
 
-    @commands.command(name="say")
+    @commands.hybrid_command(
+        name="say", 
+        description="Gửi tin nhắn nhân danh bot đến một kênh văn bản chỉ định (Chỉ Admin)"
+    )
+    @app_commands.describe(
+        channel="Kênh văn bản cần gửi tin nhắn", 
+        message="Nội dung tin nhắn muốn gửi"
+    )
     async def say(self, ctx, channel: discord.TextChannel = None, *, message: str = None):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
-            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.", ephemeral=True)
 
         if channel is None or message is None:
-            return await ctx.send("💡 Cách dùng: `p say #tên-kênh nội dung`")
+            return await ctx.send("💡 Cách dùng: `/say channel: #tên-kênh message: <nội dung>`")
         try:
             await channel.send(message)
             await ctx.send(f"✅ Đã gửi tin nhắn đến {channel.mention}")
         except Exception as e:
             await ctx.send(f"❌ Lỗi: `{e}`")
-    @commands.command(name="reload", aliases=["rl"])
+
+    @commands.hybrid_command(
+        name="reload", 
+        aliases=["rl"], 
+        description="Tải lại (reload) các Cog hệ thống để cập nhật tính năng (Chỉ Admin)"
+    )
+    @app_commands.describe(extension="Tên Cog muốn reload (vd: economy, sinkhole, AIphcbot...)")
     async def reload_cogs(self, ctx, extension: str = None):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
-            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.", ephemeral=True)
 
         extensions = ['AIphcbot', 'economy', 'sinkhole', 'lifesim', 'other', 'command']
 
@@ -736,10 +758,18 @@ class AIphcbotCog(commands.Cog):
             msg += f"❌ Thất bại tại các Cogs: {', '.join(failed_cogs)}"
 
         await ctx.send(msg)
-    @commands.command(name="mod")
+
+    @commands.hybrid_command(
+        name="mod", 
+        description="Bảng điều khiển hệ thống, quản lý tiền, quặng và AI (Chỉ Admin)"
+    )
+    @app_commands.describe(
+        action="Hành động: ai, bl, addmoney, setmoney, addore, removeore",
+        args_str="Tham số chi tiết (@user, số lượng, tên quặng...)"
+    )
     async def mod(self, ctx, action: str = None, *, args_str: str = None):
         if str(ctx.author.id) != owner_id and str(ctx.author.id) not in subowner_id:
-            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.")
+            return await ctx.send("🚫 Bạn không có quyền dùng lệnh này.", ephemeral=True)
 
         if action and action.lower() == "ai":
             system_data = get_system_data()
@@ -768,7 +798,7 @@ class AIphcbotCog(commands.Cog):
 
             if sub_action == "add":
                 if " | " not in sub_args:
-                    return await ctx.send("❌ Cú pháp sai! Dùng: `p mod bl add <regex> | <câu thoại>`")
+                    return await ctx.send("❌ Cú pháp sai! Dùng: `/mod action: bl args_str: add <regex> | <câu thoại>`")
                 pattern_part, response_part = sub_args.split(" | ", 1)
                 try:
                     re.compile(pattern_part.strip())
@@ -792,12 +822,12 @@ class AIphcbotCog(commands.Cog):
                     return await ctx.send("❌ Vị trí index không hợp lệ.")
 
         if not action or not args_str:
-            embed = discord.Embed(title="📘 Hướng dẫn sử dụng lệnh pmod", color=discord.Color.blue())
-            embed.add_field(name="Cộng tiền", value="`p mod addmoney @user <số_tiền>`", inline=False)
-            embed.add_field(name="Đặt lại tiền", value="`p mod setmoney @user <số_tiền>`", inline=False)
-            embed.add_field(name="Thêm quặng", value="`p mod addore @user <tên_quặng> <số_lượng>`", inline=False)
-            embed.add_field(name="Xóa quặng", value="`p mod removeore @user <tên_quặng> <số_lượng>`", inline=False)
-            embed.add_field(name="Cấu hình hệ thống AI", value="`p mod ai`", inline=False)
+            embed = discord.Embed(title="📘 Hướng dẫn sử dụng lệnh /mod", color=discord.Color.blue())
+            embed.add_field(name="Cộng tiền", value="`/mod action: addmoney args_str: @user <số_tiền>`", inline=False)
+            embed.add_field(name="Đặt lại tiền", value="`/mod action: setmoney args_str: @user <số_tiền>`", inline=False)
+            embed.add_field(name="Thêm quặng", value="`/mod action: addore args_str: @user <tên_quặng> <số_lượng>`", inline=False)
+            embed.add_field(name="Xóa quặng", value="`/mod action: removeore args_str: @user <tên_quặng> <số_lượng>`", inline=False)
+            embed.add_field(name="Cấu hình hệ thống AI", value="`/mod action: ai`", inline=False)
             return await ctx.send(embed=embed)
 
         args_list = args_str.split()
@@ -835,7 +865,7 @@ class AIphcbotCog(commands.Cog):
 
         elif action == "addore":
             if len(remaining_args) < 2:
-                return await ctx.send("❌ Cú pháp: `p mod addore @user <tên_quặng> <số_lượng>`")
+                return await ctx.send("❌ Cú pháp: `/mod action: addore args_str: @user <tên_quặng> <số_lượng>`")
             target_ore = remaining_args[0].lower()
             if target_ore not in ore:
                 return await ctx.send("❌ Tên quặng không tồn tại.")
@@ -850,7 +880,7 @@ class AIphcbotCog(commands.Cog):
 
         elif action == "removeore":
             if len(remaining_args) < 2:
-                return await ctx.send("❌ Cú pháp: `p mod removeore @user <tên_quặng> <số_lượng>`")
+                return await ctx.send("❌ Cú pháp: `/mod action: removeore args_str: @user <tên_quặng> <số_lượng>`")
             target_ore = remaining_args[0].lower()
             if target_ore not in ore:
                 return await ctx.send("❌ Tên quặng không tồn tại.")
