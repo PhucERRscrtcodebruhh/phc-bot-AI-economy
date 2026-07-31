@@ -4,7 +4,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![Discord.py](https://img.shields.io/badge/discord.py-v2.x-blueviolet.svg)
 ![Status](https://img.shields.io/badge/Status-Public_Beta-orange.svg)
-![Version](https://img.shields.io/badge/Version-v0.4.0--Ethanol-green.svg)
+![Version](https://img.shields.io/badge/Version-v0beta20260801--propanol-green.svg)
 
 > **PHC Bot** (hay *KatBot*) là một hệ thống Discord Bot đa năng thế hệ mới, kết hợp hoàn hảo giữa **Trí tuệ nhân tạo (AI)**, **Hệ thống Kinh tế - Đào mỏ - Nông nghiệp chuyên sâu** và **Kho Minigame đối kháng nảy lửa** (đặc biệt là siêu phẩm **Ma Sói Modified Edition**).
 
