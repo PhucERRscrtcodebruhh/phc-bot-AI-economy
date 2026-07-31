@@ -691,7 +691,7 @@ class SinkholeCog(commands.Cog):
                 with open(file_name_gt, "a", encoding="utf-8") as f:
                     f.write(f"{color_label},{timestamp}\n")
 
-    @commands.hybrid_command(
+    ''' @commands.hybrid_command(
         name="checkseed",
         aliases=["tkseed", "thongke", "pthongke", "tk"],
         description="Xem thống kê lịch sử xúc xắc Tài Xỉu trong kênh hiện tại"
@@ -850,7 +850,7 @@ class SinkholeCog(commands.Cog):
         embed.add_field(name="📜 Dòng chảy lịch sử (Mới nhất tự động cuộn xuống đáy ↓)", value=history_display, inline=False)
         
         await ctx.send(embed=embed)
-        
+    '''   
     @commands.hybrid_command(
         name="taixiu",
         aliases=["tx"],
