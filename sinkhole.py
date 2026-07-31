@@ -651,6 +651,7 @@ class SnakeGameView(View):
 class SinkholeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        '''
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -690,7 +691,8 @@ class SinkholeCog(commands.Cog):
                 file_name_gt = f"gt_data_{message.channel.id}.txt"
                 with open(file_name_gt, "a", encoding="utf-8") as f:
                     f.write(f"{color_label},{timestamp}\n")
-
+'''
+        
     ''' @commands.hybrid_command(
         name="checkseed",
         aliases=["tkseed", "thongke", "pthongke", "tk"],
