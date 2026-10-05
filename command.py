@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 import re
 import random
+import datetime
 import time
 
 def parse_time(duration: str):
@@ -79,6 +80,9 @@ class CommandCog(commands.Cog):
         )
         embed.add_field(name="/pgiveaway", value="Tạo giveaway mới.\n*Cú pháp:* `/pgiveaway reward: <quà> winners: <số người> duration: <thời gian>`", inline=False)
         embed.add_field(name="/phelp", value="Hiển thị bảng hướng dẫn này.", inline=False)
+        embed.add_field(name="/aimod", value="Xem trạng thái và cấu hình AI Moderation tiếng Việt (gpt-oss-safeguard-20b).", inline=False)
+        embed.add_field(name="/mute", value="Tạm tắt tiếng (timeout) thành viên.\n*Cú pháp:* `/mute member: @user duration: <10m/1h> reason: <lý do>`", inline=False)
+        embed.add_field(name="/unmute", value="Gỡ tắt tiếng cho thành viên.\n*Cú pháp:* `/unmute member: @user reason: <lý do>`", inline=False)
         embed.add_field(name="/ban", value="Trục xuất vĩnh viễn thành viên khỏi server.", inline=False)
         embed.add_field(name="/kick", value="Sút thành viên ra khỏi server.", inline=False)
         await ctx.send(embed=embed)
@@ -103,8 +107,38 @@ class CommandCog(commands.Cog):
         except discord.Forbidden:
             await ctx.send("❌ Tớ không đủ quyền hạn để kick thành viên này!", ephemeral=True)
 
+    @commands.hybrid_command(name="mute", description="Tạm tắt tiếng (timeout) thành viên trong máy chủ")
+    @commands.has_permissions(moderate_members=True)
+    @app_commands.describe(member="Thành viên cần tắt tiếng", duration="Thời gian (VD: 10m, 1h, 1d)", reason="Lý do tắt tiếng")
+    async def mute(self, ctx, member: discord.Member, duration: str = "10m", *, reason: str = "Không có lý do cụ thể"):
+        seconds = parse_time(duration)
+        if not seconds:
+            return await ctx.send("❌ Định dạng thời gian không hợp lệ! Hãy dùng s, m, h, d (Ví dụ: 10m, 1h, 1d).", ephemeral=True)
+        try:
+            time_delta = datetime.timedelta(seconds=seconds)
+            await member.timeout(time_delta, reason=reason)
+            await ctx.send(f"🔇 Đã tạm tắt tiếng (mute) {member.mention} trong **{duration}**. Lý do: {reason}")
+        except discord.Forbidden:
+            await ctx.send("❌ Tớ không đủ quyền hạn để mute thành viên này!", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+    @commands.hybrid_command(name="unmute", description="Gỡ tạm tắt tiếng (un-timeout) cho thành viên")
+    @commands.has_permissions(moderate_members=True)
+    @app_commands.describe(member="Thành viên cần gỡ tắt tiếng", reason="Lý do gỡ tắt tiếng")
+    async def unmute(self, ctx, member: discord.Member, *, reason: str = "Admin gỡ tắt tiếng"):
+        try:
+            await member.timeout(None, reason=reason)
+            await ctx.send(f"🔊 Đã gỡ tắt tiếng cho {member.mention}. Lý do: {reason}")
+        except discord.Forbidden:
+            await ctx.send("❌ Tớ không đủ quyền hạn để gỡ mute thành viên này!", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+
     @ban.error
     @kick.error
+    @mute.error
+    @unmute.error
     async def mod_errors(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ Cậu không có quyền hạn điều hành để thực hiện lệnh này nha!", ephemeral=True)

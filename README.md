@@ -72,9 +72,18 @@ Hệ thống kinh tế của PHC Bot được xây dựng với độ chi tiết
 
 ---
 
-## 🤖 4. Trí Tuệ Nhân Tạo (Smart AI System)
+## 🤖 4. Trí Tuệ Nhân Tạo & Kiểm Duyệt Tự Động (Smart AI & Moderation)
 
-* Tích hợp đa model AI hàng đầu: **Google Gemini 2.5 Flash**, **Gemma 4 31B**, **OpenRouter** và **G4F**.
+* 🌐 **Đa Nhà Cung Cấp Model Hàng Đầu:**
+  * **Google Gemini:** Gemini 2.5 Flash, Gemma 4 31B (Cân bằng tải đa API Keys).
+  * **Groq:** Tốc độ suy luận siêu tốc với Llama 3.3 70B, Llama 3.1 8B.
+  * **DeepSeek:** Trí tuệ vượt trội với DeepSeek-Chat (V3) và DeepSeek-Reasoner (R1).
+  * **OpenRouter & G4F:** Hỗ trợ đa dạng model mã nguồn mở và dự phòng miễn phí.
+* 🛡️ **AI Moderation Tiếng Việt (Model `openai/gpt-oss-safeguard-20b`):**
+  * Tự động phân tích và đánh giá mức độ vi phạm, trả lời chính xác `True / False` cùng `% độ xúc phạm`.
+  * **Mức độ CAO (>= 70%):** Tự động **MUTE** thành viên và xóa tin nhắn vi phạm.
+  * **Mức độ THẤP (>= 25%):** Tự động gửi báo cáo tới kênh **Admin Mod-Log** kèm các nút bấm tương tác nhanh (*Mute 10p, Xóa tin, Cảnh cáo DM, Bỏ qua*).
+  * Lệnh điều hành: `/aimod` (hoặc `/mod action: aimod / modlog / modthresh / modduration`), kiểm tra thử nghiệm trực tiếp bằng `/aimod test`.
 * Tự động cân bằng tải (Load Balancer) qua danh sách API Keys dự phòng.
 * Hệ thống **Persona linh hoạt** (mặc định đóng vai em gái dễ thương) và bộ lọc **Blacklist Regex** thông minh.
 
@@ -105,10 +114,17 @@ Hệ thống kinh tế của PHC Bot được xây dựng với độ chi tiết
    ```
 
 3. **Cấu hình File Môi Trường (`.env`):**
+   Sao chép từ file mẫu:
+   ```bash
+   cp .env.example .env
+   ```
+   Cấu hình các API Keys cần thiết:
    ```env
    TOKEN=YOUR_DISCORD_BOT_TOKEN
    GEMINI_KEYS=KEY_1,KEY_2,KEY_3
    OPENROUTER_KEY=YOUR_OPENROUTER_KEY
+   GROQ_API_KEY=YOUR_GROQ_KEY
+   DEEPSEEK_API_KEY=YOUR_DEEPSEEK_KEY
    ```
 
 4. **Khởi chạy Bot:**

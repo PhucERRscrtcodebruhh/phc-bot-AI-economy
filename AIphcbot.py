@@ -5,6 +5,8 @@ import json
 import yaml
 import aiohttp
 import asyncio
+import datetime
+from datetime import timedelta
 import random
 import html
 import discord
@@ -28,6 +30,12 @@ load_dotenv()
 # Tải danh sách Key và khởi tạo biến đếm toàn cục để cân bằng tải
 GEMINI_KEYS = [k.strip() for k in os.getenv("GEMINI_KEYS", "").split(",") if k.strip()]
 gemini_key_index = 0
+
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip() or os.getenv("GROQ_KEY", "").strip()
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip() or os.getenv("DEEPSEEK_KEY", "").strip()
+
+MODERATION_MODEL = "openai/gpt-oss-safeguard-20b"
 
 KNOWLEDGE_FILE = "knowledge.yml"
 QUIZ_FILE = 'quiz_questions.json'
@@ -371,6 +379,417 @@ async def ask_openrouter(prompt: str, channel_id: int, guild_id: Optional[int] =
         pass
     return None
 
+async def ask_groq(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
+    api_key = os.getenv("GROQ_API_KEY", "").strip() or os.getenv("GROQ_KEY", "").strip()
+    if not api_key:
+        return None
+
+    system_data = get_system_data()
+    active_model = system_data.get("active_groq_model", "llama-3.3-70b-versatile")
+    temp_val = float(system_data.get("temperature", 0.7))
+    max_tokens = int(system_data.get("max_output_tokens", 2048))
+
+    full_system_instruction = build_dynamic_instruction(guild_id)
+
+    messages = [{"role": "system", "content": full_system_instruction}]
+    raw_history = get_chat_memory(channel_id)[-10:]
+    for turn in raw_history:
+        messages.append(turn)
+    messages.append({"role": "user", "content": prompt})
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": active_model,
+        "messages": messages,
+        "temperature": temp_val,
+        "max_tokens": max_tokens
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data, timeout=20.0) as response:
+                if response.status == 200:
+                    res_json = await response.json()
+                    if "choices" in res_json and len(res_json["choices"]) > 0:
+                        return res_json["choices"][0]["message"]["content"] + f"\n\n*(Trả lời bởi GROQ: {active_model})*"
+                else:
+                    err_txt = await response.text()
+                    print(f"[Groq Error {response.status}]: {err_txt}")
+    except Exception as e:
+        print(f"[Groq Exception]: {e}")
+    return None
+
+async def ask_deepseek(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or os.getenv("DEEPSEEK_KEY", "").strip()
+    if not api_key:
+        return None
+
+    system_data = get_system_data()
+    active_model = system_data.get("active_deepseek_model", "deepseek-chat")
+    temp_val = float(system_data.get("temperature", 0.7))
+    max_tokens = int(system_data.get("max_output_tokens", 2048))
+
+    full_system_instruction = build_dynamic_instruction(guild_id)
+
+    messages = [{"role": "system", "content": full_system_instruction}]
+    raw_history = get_chat_memory(channel_id)[-10:]
+    for turn in raw_history:
+        messages.append(turn)
+    messages.append({"role": "user", "content": prompt})
+
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": active_model,
+        "messages": messages,
+        "temperature": temp_val,
+        "max_tokens": max_tokens
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data, timeout=25.0) as response:
+                if response.status == 200:
+                    res_json = await response.json()
+                    if "choices" in res_json and len(res_json["choices"]) > 0:
+                        return res_json["choices"][0]["message"]["content"] + f"\n\n*(Trả lời bởi DEEPSEEK: {active_model})*"
+                else:
+                    err_txt = await response.text()
+                    print(f"[DeepSeek Error {response.status}]: {err_txt}")
+    except Exception as e:
+        print(f"[DeepSeek Exception]: {e}")
+    return None
+
+# ==================== AI MODERATION SYSTEM ====================
+
+MODERATION_SYSTEM_PROMPT = (
+    "Bạn là một hệ thống kiểm duyệt nội dung (Content Moderation) tự động bằng tiếng Việt.\n"
+    "Nhiệm vụ: Phân tích đoạn văn bản của người dùng và xác định xem có chứa ngôn từ xúc phạm, chửi thề, lăng mạ, quấy rối, thù ghét, toxic, phân biệt đối xử hay không.\n\n"
+    "QUY ĐỊNH BẮT BUỘC: Bạn CHỈ ĐƯỢC PHÉP trả lời đúng theo 3 dòng sau đây, không giải thích dài dòng hay thêm bất kỳ chữ nào khác:\n"
+    "VIOLATION: True hoặc False\n"
+    "SEVERITY: <số từ 0 đến 100>%\n"
+    "REASON: <lý do ngắn gọn bằng tiếng Việt>\n\n"
+    "Quy chuẩn chấm điểm (SEVERITY):\n"
+    "- 0%: Nội dung bình thường, an toàn, thân thiện (VIOLATION: False).\n"
+    "- 1% - 49%: Xúc phạm nhẹ, mỉa mai, trêu đùa quá đà, nói tục nhẹ (VIOLATION: True).\n"
+    "- 50% - 100%: Chửi thề thô tục, lăng mạ nhân phẩm, đe dọa, xúc phạm nghiêm trọng (VIOLATION: True)."
+)
+
+async def call_moderation_api(content: str) -> Optional[str]:
+    system_data = get_system_data()
+    model_name = system_data.get("moderation_model", "openai/gpt-oss-safeguard-20b")
+
+    messages = [
+        {"role": "system", "content": MODERATION_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Kiểm duyệt nội dung sau:\n\"\"\"{content}\"\"\""}
+    ]
+
+    # 1. Ưu tiên OpenRouter với model openai/gpt-oss-safeguard-20b
+    openrouter_key = os.getenv("OPENROUTER_KEY", "").strip()
+    if openrouter_key:
+        try:
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {openrouter_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://discord.com",
+                "X-Title": "Discord-KatBot-Moderation"
+            }
+            data = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 120
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=data, timeout=12.0) as resp:
+                    if resp.status == 200:
+                        rj = await resp.json()
+                        if "choices" in rj and len(rj["choices"]) > 0:
+                            return rj["choices"][0]["message"]["content"]
+                    else:
+                        err_text = await resp.text()
+                        print(f"[Mod OpenRouter HTTP {resp.status}]: {err_text}")
+        except Exception as e:
+            print(f"[Mod OpenRouter Exception]: {e}")
+
+    # 2. Dự phòng: Groq
+    groq_key = os.getenv("GROQ_API_KEY", "").strip() or os.getenv("GROQ_KEY", "").strip()
+    if groq_key:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+            data = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 120
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=data, timeout=10.0) as resp:
+                    if resp.status == 200:
+                        rj = await resp.json()
+                        if "choices" in rj and len(rj["choices"]) > 0:
+                            return rj["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[Mod Groq Fallback Exception]: {e}")
+
+    # 3. Dự phòng: DeepSeek
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or os.getenv("DEEPSEEK_KEY", "").strip()
+    if deepseek_key:
+        try:
+            url = "https://api.deepseek.com/chat/completions"
+            headers = {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"}
+            data = {
+                "model": "deepseek-chat",
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 120
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=data, timeout=12.0) as resp:
+                    if resp.status == 200:
+                        rj = await resp.json()
+                        if "choices" in rj and len(rj["choices"]) > 0:
+                            return rj["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[Mod DeepSeek Fallback Exception]: {e}")
+
+    # 4. Dự phòng: Gemini
+    if genai and types and GEMINI_KEYS:
+        global gemini_key_index
+        num_keys = len(GEMINI_KEYS)
+        current_key = GEMINI_KEYS[gemini_key_index]
+        gemini_key_index = (gemini_key_index + 1) % num_keys
+        try:
+            client = genai.Client(api_key=current_key)
+            config = types.GenerateContentConfig(
+                system_instruction=MODERATION_SYSTEM_PROMPT,
+                temperature=0.0,
+                max_output_tokens=120
+            )
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[f"Kiểm duyệt nội dung sau:\n\"\"\"{content}\"\"\""],
+                    config=config
+                )
+            )
+            if res and res.text:
+                return res.text
+        except Exception as e:
+            print(f"[Mod Gemini Fallback Exception]: {e}")
+
+    return None
+
+def parse_moderation_result(raw_text: str) -> dict:
+    if not raw_text:
+        return {"violation": False, "severity": 0, "reason": "Không có phản hồi"}
+
+    text = raw_text.strip()
+    violation = False
+    v_match = re.search(r"VIOLATION\s*:\s*(True|False)", text, re.IGNORECASE)
+    if v_match:
+        violation = v_match.group(1).lower() == "true"
+    else:
+        if re.search(r"\btrue\b", text, re.IGNORECASE) and not re.search(r"\bfalse\b", text, re.IGNORECASE):
+            violation = True
+        elif re.search(r"\bfalse\b", text, re.IGNORECASE):
+            violation = False
+
+    severity = 0
+    s_match = re.search(r"SEVERITY\s*:\s*(\d+)\s*%", text, re.IGNORECASE)
+    if not s_match:
+        s_match = re.search(r"(\d{1,3})\s*%", text)
+    if s_match:
+        try:
+            severity = max(0, min(100, int(s_match.group(1))))
+        except Exception:
+            severity = 60 if violation else 0
+    else:
+        num_match = re.search(r"SEVERITY\s*:\s*(\d+)", text, re.IGNORECASE)
+        if num_match:
+            try:
+                severity = max(0, min(100, int(num_match.group(1))))
+            except Exception:
+                severity = 60 if violation else 0
+        else:
+            severity = 60 if violation else 0
+
+    if severity >= 50:
+        violation = True
+    elif severity == 0:
+        violation = False
+
+    reason = "Phát hiện ngôn từ có dấu hiệu vi phạm"
+    r_match = re.search(r"REASON\s*:\s*(.+)", text, re.IGNORECASE)
+    if r_match:
+        reason = r_match.group(1).strip()
+    else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in lines:
+            if not re.search(r"^(VIOLATION|SEVERITY)", line, re.IGNORECASE):
+                reason = line
+                break
+
+    return {
+        "violation": violation,
+        "severity": severity,
+        "reason": reason
+    }
+
+class AdminModerationView(discord.ui.View):
+    def __init__(self, target_member: discord.Member, target_message: discord.Message, severity: int, reason: str):
+        super().__init__(timeout=86400)
+        self.target_member = target_member
+        self.target_message = target_message
+        self.severity = severity
+        self.reason = reason
+
+    @discord.ui.button(label="Mute 10 phút", style=discord.ButtonStyle.danger, emoji="🔇")
+    async def mute_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not (interaction.user.guild_permissions.moderate_members or interaction.user.guild_permissions.administrator or str(interaction.user.id) == owner_id or str(interaction.user.id) in subowner_id):
+            return await interaction.response.send_message("❌ Bạn không có quyền Moderate Members.", ephemeral=True)
+
+        try:
+            duration = timedelta(minutes=10)
+            await self.target_member.timeout(duration, reason=f"Admin phạt theo AI Moderation: {self.reason} ({self.severity}%)")
+            button.disabled = True
+            button.label = f"Đã Mute 10p ({interaction.user.display_name})"
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send(f"✅ Đã Mute {self.target_member.mention} 10 phút!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot không đủ quyền Mute thành viên này (kiểm tra Role Hierarchy).", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+    @discord.ui.button(label="Xóa tin nhắn", style=discord.ButtonStyle.secondary, emoji="🗑️")
+    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not (interaction.user.guild_permissions.manage_messages or interaction.user.guild_permissions.administrator or str(interaction.user.id) == owner_id or str(interaction.user.id) in subowner_id):
+            return await interaction.response.send_message("❌ Bạn không có quyền Manage Messages.", ephemeral=True)
+
+        try:
+            await self.target_message.delete()
+            button.disabled = True
+            button.label = f"Đã xóa ({interaction.user.display_name})"
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send("✅ Đã xóa tin nhắn vi phạm!", ephemeral=True)
+        except discord.NotFound:
+            button.disabled = True
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send("⚠️ Tin nhắn này đã được xóa trước đó.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Bot không có quyền xóa tin nhắn trong kênh đó.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+    @discord.ui.button(label="Cảnh cáo DM", style=discord.ButtonStyle.primary, emoji="⚠️")
+    async def warn_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not (interaction.user.guild_permissions.moderate_members or interaction.user.guild_permissions.administrator or str(interaction.user.id) == owner_id or str(interaction.user.id) in subowner_id):
+            return await interaction.response.send_message("❌ Bạn không có quyền điều hành.", ephemeral=True)
+
+        try:
+            embed_dm = discord.Embed(
+                title=f"⚠️ Cảnh cáo từ Ban Quản Trị {self.target_member.guild.name}",
+                description=(
+                    f"Tin nhắn của bạn trong kênh {self.target_message.channel.mention} có dấu hiệu xúc phạm.\n\n"
+                    f"💬 **Nội dung**: *\"{self.target_message.content}\"*\n"
+                    f"📊 **Độ xúc phạm**: `{self.severity}%`\n"
+                    f"📝 **Lý do**: {self.reason}\n\n"
+                    f"Vui lòng chú ý ngôn từ để tránh bị xử phạt nặng hơn!"
+                ),
+                color=discord.Color.gold(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            await self.target_member.send(embed=embed_dm)
+            button.disabled = True
+            button.label = f"Đã cảnh cáo ({interaction.user.display_name})"
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send(f"✅ Đã gửi DM cảnh cáo đến {self.target_member.mention}!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"⚠️ Không thể gửi DM cho {self.target_member.mention} (người dùng chặn DM).", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+    @discord.ui.button(label="Bỏ qua", style=discord.ButtonStyle.success, emoji="✅")
+    async def ignore_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not (interaction.user.guild_permissions.manage_messages or interaction.user.guild_permissions.administrator or str(interaction.user.id) == owner_id or str(interaction.user.id) in subowner_id):
+            return await interaction.response.send_message("❌ Bạn không có quyền điều hành.", ephemeral=True)
+
+        for item in self.children:
+            item.disabled = True
+        button.label = f"Đã bỏ qua ({interaction.user.display_name})"
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send("✅ Đã bỏ qua báo cáo này.", ephemeral=True)
+
+def get_admin_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    system_data = get_system_data()
+    saved_channels = system_data.get("moderation_log_channels", {})
+    saved_id = saved_channels.get(str(guild.id))
+    if saved_id:
+        ch = guild.get_channel(int(saved_id))
+        if ch and isinstance(ch, discord.TextChannel):
+            return ch
+
+    keywords = ["mod-log", "admin-log", "kiem-duyet", "kiểm-duyệt", "canh-bao", "cảnh-báo", "moderation", "logs"]
+    for ch in guild.text_channels:
+        lower_name = ch.name.lower()
+        if any(kw in lower_name for kw in keywords):
+            return ch
+
+    if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+        return guild.system_channel
+
+    return None
+
+async def send_admin_report(message: discord.Message, severity: int, reason: str, action_taken: str = "Cần Admin duyệt (Mức độ thấp)"):
+    guild = message.guild
+    if not guild:
+        return
+
+    admin_channel = get_admin_log_channel(guild)
+    if not admin_channel:
+        return
+
+    is_auto_muted = "Mute" in action_taken
+    embed_color = discord.Color.red() if is_auto_muted else discord.Color.gold()
+    title_text = "🚨 [AI MODERATION] XÚC PHẠM MỨC CAO - ĐÃ TỰ ĐỘNG XỬ LÝ" if is_auto_muted else "🛡️ [AI MODERATION] CẦN ADMIN DUYỆT - ĐỘ XÚC PHẠM THẤP"
+
+    embed = discord.Embed(
+        title=title_text,
+        color=embed_color,
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    embed.add_field(name="👤 Người gửi", value=f"{message.author.mention} (`{message.author.name}`)\nID: `{message.author.id}`", inline=True)
+    embed.add_field(name="📍 Kênh", value=message.channel.mention, inline=True)
+    embed.add_field(name="📊 Độ xúc phạm", value=f"`{severity}%`", inline=True)
+    embed.add_field(name="💬 Nội dung tin nhắn", value=f">>> {message.content[:1000]}", inline=False)
+    embed.add_field(name="📝 Phân tích từ AI", value=f"• Lý do: {reason}\n• Trạng thái: **{action_taken}**", inline=False)
+    embed.add_field(name="🔗 Tin nhắn gốc", value=f"[Nhấn vào đây để xem]({message.jump_url})", inline=False)
+
+    system_data = get_system_data()
+    mod_model = system_data.get("moderation_model", "openai/gpt-oss-safeguard-20b")
+    embed.set_footer(text=f"Model: {mod_model} • AI Moderation System")
+
+    view = AdminModerationView(message.author, message, severity, reason) if not is_auto_muted else None
+
+    try:
+        if view:
+            await admin_channel.send(embed=embed, view=view)
+        else:
+            await admin_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[Admin Report Send Error]: {e}")
+
 async def ask_g4f_fallback(prompt: str, channel_id: int, guild_id: Optional[int] = None) -> Optional[str]:
     system_data = get_system_data()
     active_g4f_model = system_data.get("active_g4f_model", "automatic")
@@ -499,10 +918,15 @@ class AIDropdown(Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="Ưu tiên: Google AI Studio", value="set_provider_gemini", description="Dùng hệ thống cân bằng tải Gemini Keys", emoji="🟢"),
+            discord.SelectOption(label="Ưu tiên: Groq (Siêu tốc)", value="set_provider_groq", description="Dùng Groq API (Llama 3.3 70B)", emoji="⚡"),
+            discord.SelectOption(label="Ưu tiên: DeepSeek", value="set_provider_deepseek", description="Dùng DeepSeek API (V3 / R1)", emoji="🐳"),
             discord.SelectOption(label="Ưu tiên: OpenRouter", value="set_provider_openrouter", description="Dùng OpenRouter mặc định", emoji="🟣"),
             discord.SelectOption(label="Ưu tiên: G4F (Miễn phí)", value="set_provider_g4f", description="Dùng G4F làm mặc định", emoji="🔵"),
             discord.SelectOption(label="Google AI: Gemma 4 31B", value="model_gemma_4_31b", description="Chạy model Gemma 4 31B", emoji="🧠"),
             discord.SelectOption(label="Google AI: Gemini 2.5 Flash", value="model_gemini_2.5", description="Mặc định nhanh, ổn định", emoji="⚡"),
+            discord.SelectOption(label="Groq: Llama 3.3 70B", value="model_groq_llama70b", description="Model Llama 3.3 70B trên Groq", emoji="🦙"),
+            discord.SelectOption(label="DeepSeek: Chat (V3)", value="model_deepseek_chat", description="Model DeepSeek V3", emoji="🤖"),
+            discord.SelectOption(label="Bật/Tắt AI Moderation", value="toggle_ai_moderation", description="Bật hoặc tắt hệ thống kiểm duyệt AI", emoji="🛡️"),
             discord.SelectOption(label="Cấu hình tham số AI (Temp/Thinking)", value="config_params", description="Mở bảng nhập tham số", emoji="🎛️"),
             discord.SelectOption(label="🧹 Xóa Context hội thoại kênh này", value="clear_channel_context", description="Xóa sạch lịch sử chat kênh hiện tại", emoji="🧹"),
             discord.SelectOption(label="🚨 Quét & Cập nhật G4F (Sweep)", value="sweep_g4f", description="Quét các model G4F", emoji="⚙️"),
@@ -519,6 +943,10 @@ class AIDropdown(Select):
 
         if val == "set_provider_gemini":
             system_data["ai_provider"] = "gemini"
+        elif val == "set_provider_groq":
+            system_data["ai_provider"] = "groq"
+        elif val == "set_provider_deepseek":
+            system_data["ai_provider"] = "deepseek"
         elif val == "set_provider_openrouter":
             system_data["ai_provider"] = "openrouter"
         elif val == "set_provider_g4f":
@@ -527,6 +955,15 @@ class AIDropdown(Select):
             system_data["active_ai_model"] = "gemma-4-31b-it"
         elif val == "model_gemini_2.5":
             system_data["active_ai_model"] = "gemini-2.5-flash"
+        elif val == "model_groq_llama70b":
+            system_data["active_groq_model"] = "llama-3.3-70b-versatile"
+        elif val == "model_deepseek_chat":
+            system_data["active_deepseek_model"] = "deepseek-chat"
+        elif val == "toggle_ai_moderation":
+            cur = system_data.get("moderation_enabled", True)
+            system_data["moderation_enabled"] = not cur
+            status_str = "BẬT" if not cur else "TẮT"
+            msg_text = f"🛡️ Đã {status_str} tính năng AI Moderation toàn cục!"
         elif val == "config_params":
             return await interaction.response.send_modal(AIParamModal(self.view))
         elif val == "clear_channel_context":
@@ -550,22 +987,43 @@ class AIDropdownView(View):
     def generate_embed(self, system_data):
         current_provider = system_data.get("ai_provider", "gemini").upper()
         current_model = system_data.get("active_ai_model", "gemini-2.5-flash")
+        groq_model = system_data.get("active_groq_model", "llama-3.3-70b-versatile")
+        deepseek_model = system_data.get("active_deepseek_model", "deepseek-chat")
+        openrouter_model = system_data.get("active_openrouter_model", "meta-llama/llama-3-8b-instruct:free")
         temp = system_data.get("temperature", 0.7)
         max_tok = system_data.get("max_output_tokens", 2048)
         think = system_data.get("thinking_budget", 0)
         think_status = f"BẬT ({think} tokens)" if think > 0 else "TẮT"
         total_keys = len(GEMINI_KEYS)
 
+        groq_key_stat = "Đã cấu hình" if (os.getenv("GROQ_API_KEY") or os.getenv("GROQ_KEY")) else "Chưa cài"
+        deepseek_key_stat = "Đã cấu hình" if (os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_KEY")) else "Chưa cài"
+        openrouter_key_stat = "Đã cấu hình" if os.getenv("OPENROUTER_KEY") else "Chưa cài"
+
+        mod_enabled = "BẬT" if system_data.get("moderation_enabled", True) else "TẮT"
+        mod_model = system_data.get("moderation_model", "openai/gpt-oss-safeguard-20b")
+        mod_rep = system_data.get("moderation_report_threshold", 25)
+        mod_mute = system_data.get("moderation_mute_threshold", 70)
+        mod_dur = system_data.get("moderation_mute_duration", 10)
+
         embed = discord.Embed(
-            title="⚙️ BẢNG ĐIỀU KHIỂN HỆ THỐNG AI NÂNG CAO",
+            title="⚙️ BẢNG ĐIỀU KHIỂN HỆ THỐNG AI & KIỂM DUYỆT",
             description=(
-                f"🔌 **Hệ thống AI ưu tiên**: `{current_provider}`\n"
-                f"🔑 **Số lượng Gemini Keys khả dụng**: `{total_keys}` *(Cân bằng tải: BẬT)*\n"
-                f"🧠 **Model Google AI**: `{current_model}`\n"
-                f"🎛️ **Độ sáng tạo (Temp)**: `{temp}`\n"
-                f"📝 **Độ dài tối đa (Max Tokens)**: `{max_tok}`\n"
-                f"💭 **Ngân sách suy nghĩ (Thinking)**: `{think_status}`\n\n"
-                "*Sử dụng Dropdown Menu bên dưới để thay đổi cài đặt.*"
+                f"🔌 **Hệ thống AI ưu tiên**: `{current_provider}`\n\n"
+                f"**📡 Nhà cung cấp Model:**\n"
+                f"• 🟢 **Google AI Studio**: `{total_keys} Keys` (Model: `{current_model}`)\n"
+                f"• ⚡ **Groq**: `{groq_key_stat}` (Model: `{groq_model}`)\n"
+                f"• 🐳 **DeepSeek**: `{deepseek_key_stat}` (Model: `{deepseek_model}`)\n"
+                f"• 🟣 **OpenRouter**: `{openrouter_key_stat}` (Model: `{openrouter_model}`)\n"
+                f"• 🔵 **G4F**: `Miễn phí (Tự động xoay vòng)`\n\n"
+                f"**🛡️ AI Moderation (Tiếng Việt):**\n"
+                f"• Trạng thái: `{mod_enabled}`\n"
+                f"• Model kiểm duyệt: `{mod_model}`\n"
+                f"• Ngưỡng Báo Admin (Thấp): `>= {mod_rep}%`\n"
+                f"• Ngưỡng Mute (Cao): `>= {mod_mute}%` (Thời gian: `{mod_dur} phút`)\n\n"
+                f"**🎛️ Tham số Chatbot:**\n"
+                f"• Độ sáng tạo (Temp): `{temp}` | Max Tokens: `{max_tok}` | Thinking: `{think_status}`\n\n"
+                "*Sử dụng Dropdown Menu bên dưới để thay đổi cài đặt nhanh.*"
             ),
             color=discord.Color.teal()
         )
@@ -581,6 +1039,10 @@ class AIphcbotCog(commands.Cog):
     async def on_message(self, message):
         if message.author.bot:
             return
+
+        # AI Moderation kiểm duyệt tự động tiếng Việt (Chạy ngầm không chặn luồng)
+        if message.guild:
+            asyncio.create_task(self.handle_ai_moderation(message))
 
         is_mentioned = self.bot.user in message.mentions
         is_reply_to_bot = False
@@ -620,23 +1082,26 @@ class AIphcbotCog(commands.Cog):
                 return
 
             async with message.channel.typing():
-                primary_provider = system_data.get("ai_provider", "gemini")
+                primary_provider = system_data.get("ai_provider", "gemini").lower()
                 ai_response = None
                 guild_id = message.guild.id if message.guild else None
 
-                if primary_provider == "openrouter":
-                    cascade_order = ["openrouter", "gemini", "g4f"]
-                elif primary_provider == "g4f":
-                    cascade_order = ["g4f", "openrouter", "gemini"]
+                all_providers = ["gemini", "groq", "deepseek", "openrouter", "g4f"]
+                if primary_provider in all_providers:
+                    cascade_order = [primary_provider] + [p for p in all_providers if p != primary_provider]
                 else:
-                    cascade_order = ["gemini", "openrouter", "g4f"]
+                    cascade_order = ["gemini", "groq", "deepseek", "openrouter", "g4f"]
 
                 for provider in cascade_order:
                     try:
-                        if provider == "openrouter":
-                            ai_response = await ask_openrouter(clean_prompt, message.channel.id, guild_id=guild_id)
-                        elif provider == "gemini":
+                        if provider == "gemini":
                             ai_response = await ask_gemini(clean_prompt, message.channel.id, guild_id=guild_id)
+                        elif provider == "groq":
+                            ai_response = await ask_groq(clean_prompt, message.channel.id, guild_id=guild_id)
+                        elif provider == "deepseek":
+                            ai_response = await ask_deepseek(clean_prompt, message.channel.id, guild_id=guild_id)
+                        elif provider == "openrouter":
+                            ai_response = await ask_openrouter(clean_prompt, message.channel.id, guild_id=guild_id)
                         elif provider == "g4f":
                             ai_response = await ask_g4f_fallback(clean_prompt, message.channel.id, guild_id=guild_id)
 
@@ -658,6 +1123,226 @@ class AIphcbotCog(commands.Cog):
 
                 if not ai_response:
                     await message.reply("Ui da... Đầu óc em hơi chóng mặt xíu, oniichan chờ em một tẹo rồi hỏi tiếp nhé! 😭")
+
+    async def handle_ai_moderation(self, message: discord.Message):
+        try:
+            if not message.guild or message.author.bot:
+                return
+
+            # Bỏ qua Admin và Bot Owners
+            if message.author.guild_permissions.administrator:
+                return
+            if str(message.author.id) == owner_id or str(message.author.id) in subowner_id:
+                return
+
+            clean_text = message.content.strip()
+            if not clean_text or len(clean_text) < 2:
+                return
+
+            # Bỏ qua nếu là lệnh hợp lệ của bot
+            ctx = await self.bot.get_context(message)
+            if ctx.valid:
+                return
+
+            system_data = get_system_data()
+            if not system_data.get("moderation_enabled", True):
+                return
+
+            guild_mods = system_data.get("guild_moderation", {})
+            if not guild_mods.get(str(message.guild.id), True):
+                return
+
+            raw_result = await call_moderation_api(clean_text)
+            if not raw_result:
+                return
+
+            mod_result = parse_moderation_result(raw_result)
+            is_violation = mod_result["violation"]
+            severity = mod_result["severity"]
+            reason = mod_result["reason"]
+
+            mute_threshold = int(system_data.get("moderation_mute_threshold", 70))
+            report_threshold = int(system_data.get("moderation_report_threshold", 25))
+
+            if not is_violation and severity < report_threshold:
+                return
+
+            mute_duration = int(system_data.get("moderation_mute_duration", 10))
+
+            # 1. MỨC ĐỘ CAO: TỰ ĐỘNG MUTE THÀNH VIÊN
+            if severity >= mute_threshold:
+                muted = False
+                try:
+                    duration = timedelta(minutes=mute_duration)
+                    await message.author.timeout(duration, reason=f"AI Moderation ({severity}%): {reason}")
+                    muted = True
+                except discord.Forbidden:
+                    muted = False
+                except Exception as e:
+                    print(f"[Mod Timeout Error]: {e}")
+                    muted = False
+
+                embed = discord.Embed(
+                    title="🔇 [AI Moderation] Phát Hiện Ngôn Từ Xúc Phạm Nặng",
+                    description=(
+                        f"⚠️ Thành viên: {message.author.mention}\n"
+                        f"📊 **Độ xúc phạm**: `{severity}%` *(Mức CAO)*\n"
+                        f"⚖️ **Hình phạt**: " + (f"Tạm tắt tiếng (Mute) **{mute_duration} phút**" if muted else "Cảnh cáo (Bot thiếu quyền Mute thành viên)") + "\n"
+                        f"📝 **Lý do**: {reason}\n\n"
+                        "*Vui lòng chú ý ngôn từ và giữ gìn văn hóa máy chủ!*"
+                    ),
+                    color=discord.Color.red(),
+                    timestamp=datetime.datetime.now(datetime.timezone.utc)
+                )
+                embed.set_footer(text=f"Model: {system_data.get('moderation_model', 'openai/gpt-oss-safeguard-20b')}")
+
+                try:
+                    await message.channel.send(embed=embed)
+                except Exception:
+                    pass
+
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+
+                action_desc = f"Đã tự động Mute {mute_duration} phút & xóa tin" if muted else "Vi phạm mức cao (Chưa thể Mute do thiếu quyền)"
+                await send_admin_report(message, severity, reason, action_taken=action_desc)
+
+            # 2. MỨC ĐỘ THẤP: BÁO CÁO CHO ADMIN DUYỆT
+            elif severity >= report_threshold or is_violation:
+                await send_admin_report(message, severity, reason, action_taken="Cần Admin duyệt (Độ xúc phạm thấp)")
+
+        except Exception as e:
+            print(f"[Handle Moderation Exception]: {e}")
+
+    @commands.hybrid_group(name="aimod", fallback="status", description="Hệ thống kiểm duyệt AI Moderation tiếng Việt")
+    async def aimod_group(self, ctx):
+        system_data = get_system_data()
+        global_enabled = system_data.get("moderation_enabled", True)
+        guild_mods = system_data.get("guild_moderation", {})
+        guild_enabled = guild_mods.get(str(ctx.guild.id), global_enabled) if ctx.guild else global_enabled
+
+        mod_model = system_data.get("moderation_model", "openai/gpt-oss-safeguard-20b")
+        report_thresh = system_data.get("moderation_report_threshold", 25)
+        mute_thresh = system_data.get("moderation_mute_threshold", 70)
+        mute_duration = system_data.get("moderation_mute_duration", 10)
+
+        admin_ch = get_admin_log_channel(ctx.guild) if ctx.guild else None
+        ch_text = admin_ch.mention if admin_ch else "Chưa cài đặt (Tìm tự động theo tên mod-log/logs)"
+
+        embed = discord.Embed(
+            title="🛡️ BẢNG ĐIỀU KHIỂN AI MODERATION (TIẾNG VIỆT)",
+            description=(
+                f"⚙️ **Trạng thái máy chủ này**: `{'BẬT' if guild_enabled else 'TẮT'}`\n"
+                f"🌐 **Trạng thái toàn cục**: `{'BẬT' if global_enabled else 'TẮT'}`\n"
+                f"🧠 **Model kiểm duyệt**: `{mod_model}`\n"
+                f"📍 **Kênh Mod-Log**: {ch_text}\n\n"
+                f"**📊 Phân cấp xử lý độ xúc phạm:**\n"
+                f"• 🟡 **Mức THẤP (`>= {report_thresh}%` và `< {mute_thresh}%`)**: Đem cho Admin duyệt (Kèm nút bấm tương tác Mute/Xóa/Cảnh cáo)\n"
+                f"• 🔴 **Mức CAO (`>= {mute_thresh}%`)**: Tự động MUTE thành viên `{mute_duration} phút` và xóa tin nhắn\n"
+                f"• 🟢 **An toàn (`< {report_thresh}%`)**: Bỏ qua\n\n"
+                f"**📖 Các lệnh điều hành:**\n"
+                f"• `/aimod toggle`: Bật/Tắt kiểm duyệt cho server\n"
+                f"• `/aimod setchannel #kênh`: Đặt kênh nhận báo cáo cho Admin\n"
+                f"• `/aimod setthreshold report: <%> mute: <%>`: Đặt ngưỡng độ xúc phạm\n"
+                f"• `/aimod setduration minutes: <phút>`: Đặt thời gian tự động mute\n"
+                f"• `/aimod test text: <nội dung>`: Thử nghiệm kiểm tra độ xúc phạm một câu"
+            ),
+            color=discord.Color.blue()
+        )
+        await ctx.send(embed=embed)
+
+    @aimod_group.command(name="toggle", description="Bật hoặc tắt kiểm duyệt AI cho server này")
+    @commands.has_permissions(administrator=True)
+    async def aimod_toggle(self, ctx):
+        if not ctx.guild:
+            return await ctx.send("❌ Lệnh này chỉ dùng được trong server.")
+        system_data = get_system_data()
+        if "guild_moderation" not in system_data:
+            system_data["guild_moderation"] = {}
+        cur = system_data["guild_moderation"].get(str(ctx.guild.id), system_data.get("moderation_enabled", True))
+        system_data["guild_moderation"][str(ctx.guild.id)] = not cur
+        save_data(player_inventory)
+        new_status = "BẬT" if not cur else "TẮT"
+        await ctx.send(f"🛡️ Đã **{new_status}** tính năng AI Moderation cho máy chủ **{ctx.guild.name}**!")
+
+    @aimod_group.command(name="setchannel", description="Đặt kênh nhận báo cáo xúc phạm cho Admin")
+    @app_commands.describe(channel="Kênh văn bản nhận báo cáo kiểm duyệt")
+    @commands.has_permissions(administrator=True)
+    async def aimod_setchannel(self, ctx, channel: discord.TextChannel):
+        if not ctx.guild:
+            return await ctx.send("❌ Lệnh này chỉ dùng được trong server.")
+        system_data = get_system_data()
+        if "moderation_log_channels" not in system_data:
+            system_data["moderation_log_channels"] = {}
+        system_data["moderation_log_channels"][str(ctx.guild.id)] = channel.id
+        save_data(player_inventory)
+        await ctx.send(f"✅ Đã đặt kênh báo cáo AI Moderation thành {channel.mention}!")
+
+    @aimod_group.command(name="setthreshold", description="Đặt ngưỡng % độ xúc phạm (Thấp -> Báo Admin, Cao -> Mute)")
+    @app_commands.describe(report="Ngưỡng báo Admin (0-100%, mặc định 25)", mute="Ngưỡng tự động Mute (0-100%, mặc định 70)")
+    @commands.has_permissions(administrator=True)
+    async def aimod_setthreshold(self, ctx, report: int, mute: int):
+        if not (0 <= report <= 100 and 0 <= mute <= 100 and report < mute):
+            return await ctx.send("❌ Giá trị ngưỡng không hợp lệ! Yêu cầu: `0 <= report < mute <= 100`.")
+        system_data = get_system_data()
+        system_data["moderation_report_threshold"] = report
+        system_data["moderation_mute_threshold"] = mute
+        save_data(player_inventory)
+        await ctx.send(f"✅ Đã cập nhật ngưỡng kiểm duyệt: Báo Admin khi `>= {report}%`, Tự động Mute khi `>= {mute}%`!")
+
+    @aimod_group.command(name="setduration", description="Đặt thời gian tự động Mute (số phút)")
+    @app_commands.describe(minutes="Số phút tắt tiếng (VD: 5, 10, 30, 60)")
+    @commands.has_permissions(administrator=True)
+    async def aimod_setduration(self, ctx, minutes: int):
+        if minutes <= 0 or minutes > 40320:
+            return await ctx.send("❌ Thời gian không hợp lệ (từ 1 đến 40320 phút).")
+        system_data = get_system_data()
+        system_data["moderation_mute_duration"] = minutes
+        save_data(player_inventory)
+        await ctx.send(f"✅ Đã đặt thời gian tự động Mute thành **{minutes} phút**!")
+
+    @aimod_group.command(name="test", description="Thử nghiệm kiểm duyệt 1 câu với AI Moderation")
+    @app_commands.describe(text="Nội dung cần kiểm tra độ xúc phạm")
+    async def aimod_test(self, ctx, *, text: str):
+        async with ctx.typing():
+            raw_result = await call_moderation_api(text)
+            if not raw_result:
+                return await ctx.send("❌ Không nhận được phản hồi từ AI kiểm duyệt (hãy kiểm tra API keys trong file `.env`).")
+
+            result = parse_moderation_result(raw_result)
+            is_violation = result["violation"]
+            severity = result["severity"]
+            reason = result["reason"]
+
+            system_data = get_system_data()
+            report_thresh = int(system_data.get("moderation_report_threshold", 25))
+            mute_thresh = int(system_data.get("moderation_mute_threshold", 70))
+            mod_model = system_data.get("moderation_model", "openai/gpt-oss-safeguard-20b")
+
+            if severity >= mute_thresh:
+                action_text = "🚨 **HÀNH ĐỘNG DỰ KIẾN: TỰ ĐỘNG MUTE** (Độ xúc phạm mức CAO)"
+                color = discord.Color.red()
+            elif severity >= report_thresh or is_violation:
+                action_text = "⚠️ **HÀNH ĐỘNG DỰ KIẾN: BÁO CÁO ADMIN DUYỆT** (Độ xúc phạm mức THẤP)"
+                color = discord.Color.gold()
+            else:
+                action_text = "✅ **HÀNH ĐỘNG DỰ KIẾN: BỎ QUA** (Nội dung an toàn)"
+                color = discord.Color.green()
+
+            embed = discord.Embed(
+                title="🧪 KẾT QUẢ TEST AI MODERATION",
+                color=color,
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            embed.add_field(name="💬 Nội dung test", value=f"\"{text}\"", inline=False)
+            embed.add_field(name="🚨 VIOLATION", value=f"`{is_violation}`", inline=True)
+            embed.add_field(name="📊 SEVERITY (% Xúc phạm)", value=f"`{severity}%`", inline=True)
+            embed.add_field(name="📝 REASON (Lý do)", value=f"{reason}", inline=False)
+            embed.add_field(name="⚖️ Đánh giá hệ thống", value=action_text, inline=False)
+            embed.set_footer(text=f"Model: {mod_model} • Test Mode")
+            await ctx.send(embed=embed)
 
     @commands.hybrid_command(
         name="cswitching", 
@@ -821,6 +1506,73 @@ class AIphcbotCog(commands.Cog):
                 except Exception:
                     return await ctx.send("❌ Vị trí index không hợp lệ.")
 
+        if action and action.lower() == "aimod":
+            system_data = get_system_data()
+            if not args_str:
+                cur = system_data.get("moderation_enabled", True)
+                system_data["moderation_enabled"] = not cur
+                save_data(player_inventory)
+                return await ctx.send(f"🛡️ Đã {'BẬT' if not cur else 'TẮT'} tính năng AI Moderation toàn cục!")
+            if args_str.lower() in ("on", "bat", "enable"):
+                system_data["moderation_enabled"] = True
+                save_data(player_inventory)
+                return await ctx.send("🛡️ Đã BẬT AI Moderation toàn cục!")
+            elif args_str.lower() in ("off", "tat", "disable"):
+                system_data["moderation_enabled"] = False
+                save_data(player_inventory)
+                return await ctx.send("🛡️ Đã TẮT AI Moderation toàn cục!")
+            else:
+                return await ctx.send("❌ Dùng: `/mod action: aimod args_str: <on|off>`")
+
+        if action and action.lower() == "modlog":
+            if not args_str:
+                return await ctx.send("❌ Dùng: `/mod action: modlog args_str: <#kênh hoặc ID_kênh>`")
+            cid = args_str.strip().replace("<#", "").replace(">", "")
+            try:
+                ch = ctx.guild.get_channel(int(cid)) if ctx.guild else None
+                if not ch:
+                    return await ctx.send("❌ Không tìm thấy kênh chỉ định.")
+                system_data = get_system_data()
+                if "moderation_log_channels" not in system_data:
+                    system_data["moderation_log_channels"] = {}
+                system_data["moderation_log_channels"][str(ctx.guild.id)] = ch.id
+                save_data(player_inventory)
+                return await ctx.send(f"✅ Đã đặt kênh Mod-Log cho AI Moderation thành {ch.mention}!")
+            except Exception as e:
+                return await ctx.send(f"❌ Lỗi: `{e}`")
+
+        if action and action.lower() == "modthresh":
+            if not args_str:
+                return await ctx.send("❌ Dùng: `/mod action: modthresh args_str: <ngưỡng_báo_admin> <ngưỡng_mute>`")
+            parts = args_str.split()
+            if len(parts) < 2:
+                return await ctx.send("❌ Cần nhập 2 số (Ví dụ: `25 70`).")
+            try:
+                rep_val, mute_val = int(parts[0]), int(parts[1])
+                if not (0 <= rep_val <= 100 and 0 <= mute_val <= 100 and rep_val < mute_val):
+                    return await ctx.send("❌ Ngưỡng không hợp lệ (0 <= report < mute <= 100).")
+                system_data = get_system_data()
+                system_data["moderation_report_threshold"] = rep_val
+                system_data["moderation_mute_threshold"] = mute_val
+                save_data(player_inventory)
+                return await ctx.send(f"✅ Đã cập nhật: Báo Admin khi `>= {rep_val}%`, Mute khi `>= {mute_val}%`!")
+            except ValueError:
+                return await ctx.send("❌ Vui lòng nhập số nguyên hợp lệ.")
+
+        if action and action.lower() == "modduration":
+            if not args_str:
+                return await ctx.send("❌ Dùng: `/mod action: modduration args_str: <số_phút>`")
+            try:
+                mins = int(args_str.strip())
+                if mins <= 0:
+                    return await ctx.send("❌ Số phút phải lớn hơn 0.")
+                system_data = get_system_data()
+                system_data["moderation_mute_duration"] = mins
+                save_data(player_inventory)
+                return await ctx.send(f"✅ Đã đặt thời gian Mute tự động thành {mins} phút!")
+            except ValueError:
+                return await ctx.send("❌ Vui lòng nhập số phút hợp lệ.")
+
         if not action or not args_str:
             embed = discord.Embed(title="📘 Hướng dẫn sử dụng lệnh /mod", color=discord.Color.blue())
             embed.add_field(name="Cộng tiền", value="`/mod action: addmoney args_str: @user <số_tiền>`", inline=False)
@@ -828,6 +1580,10 @@ class AIphcbotCog(commands.Cog):
             embed.add_field(name="Thêm quặng", value="`/mod action: addore args_str: @user <tên_quặng> <số_lượng>`", inline=False)
             embed.add_field(name="Xóa quặng", value="`/mod action: removeore args_str: @user <tên_quặng> <số_lượng>`", inline=False)
             embed.add_field(name="Cấu hình hệ thống AI", value="`/mod action: ai`", inline=False)
+            embed.add_field(name="Bật/Tắt AI Moderation", value="`/mod action: aimod args_str: on/off`", inline=False)
+            embed.add_field(name="Đặt kênh Mod-Log", value="`/mod action: modlog args_str: #kênh`", inline=False)
+            embed.add_field(name="Đặt ngưỡng kiểm duyệt", value="`/mod action: modthresh args_str: 25 70`", inline=False)
+            embed.add_field(name="Đặt thời gian Mute", value="`/mod action: modduration args_str: 10`", inline=False)
             return await ctx.send(embed=embed)
 
         args_list = args_str.split()
