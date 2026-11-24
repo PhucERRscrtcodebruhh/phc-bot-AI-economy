@@ -1,0 +1,8 @@
+# Discord Bot Core
+discord.py>=2.3.2
+
+# Biến môi trường (.env)
+python-dotenv>=1.0.0
+
+# Tùy chọn cho lifesim.py sinh tình huống bằng Gemini (tự fallback nếu không có)
+google-genai>=0.1.1

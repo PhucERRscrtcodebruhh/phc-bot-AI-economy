@@ -22,6 +22,10 @@ ENV/
 
 # Database & local data
 data.json
+ai_data.json
+*.db
+*.db-wal
+*.db-shm
 g4f_active_models.json
 
 # Logs & temp files

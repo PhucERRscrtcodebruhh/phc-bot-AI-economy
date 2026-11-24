@@ -20,11 +20,11 @@ OWNER_ID = 1135806949527670835
 SUBOWNER_ID = [1138020979348606996]
 WELCOME_CHANNEL_ID = 1297128688801808434
 
-# Cấu hình Intents tối đa
+# Cấu hình Intents
 intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.presences = True
+intents.message_content = False
+intents.members = False
+intents.presences = False
 
 
 class KatBot(commands.Bot):

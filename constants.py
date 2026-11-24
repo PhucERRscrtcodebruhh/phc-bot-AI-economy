@@ -5,12 +5,6 @@
 
 KESLING_ICON = "<:kesling:1434181800539979848>" 
 
-
-price['kesling_stone'] = 250 
-
-
-emoji_icon['kesling_stone'] = '<:keslings_stone:1433843943405125725>'
-
 # Định nghĩa cửa hàng Thú Cưng
 PET_SHOP = {
     "meo_than_tai": {
@@ -75,7 +69,7 @@ price = {
     'wolframite': 30, 'scheelite': 28, 'zircon': 25, 'barite': 6, 'spodumene': 32,
     'lepidolite': 30, 'beryl': 35, 'tourmaline': 40, 'corundum': 45, 'diamond': 100,
     'iron_ingot': 25, 'copper_ingot': 20, 'gold_ingot': 80, 'silver_ingot': 40,
-    'stone_brick': 5, 'clay': 2, 'slag': 0,
+    'stone_brick': 5, 'clay': 2, 'slag': 0, 'kesling_stone': 250,
     # Đồ nghề phụ trợ nông nghiệp/công việc trong shop
     'ruong': 50000,
     'giao_an': 15000,
@@ -106,6 +100,7 @@ emoji_icon = {
     'iron_ingot': '<:iron_ingot:1434922305703907492>', 'copper_ingot': '<:copper_ingot:1434922303782785157>',
     'gold_ingot': '<:gold_bar:1434922294261715034>', 'silver_ingot': '🥈',
     'stone_brick': '<:brick:1427000000000000000>', 'clay': '🧱', 'slag': '<:slag:1434922307846934579>',
+    'kesling_stone': '<:keslings_stone:1433843943405125725>',
     'default_pickaxe': '🪨', 'wood_pickaxe': '<:Wooden_Pickaxe:1434556115655594126>',
     'stone_pickaxe': '<:Stone_Pickaxe:1434556117773451365>', 'iron_pickaxe': '<:Iron_Pickaxe:1434556113147269302>',
     'gold_pickaxe': '<:Golden_Pickaxe:1434556111209631917>', 'diamond_pickaxe': '<:Diamond_Pickaxe:1434556109053497486>',

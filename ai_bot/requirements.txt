@@ -1,0 +1,17 @@
+# Discord Bot Core
+discord.py>=2.3.2
+
+# Biến môi trường (.env)
+python-dotenv>=1.0.0
+
+# HTTP Client bất đồng bộ (Groq, OpenRouter, DeepSeek)
+aiohttp>=3.9.0
+
+# Đọc / Ghi cấu hình YAML (knowledge.yml)
+PyYAML>=6.0.1
+
+# Google Gemini SDK
+google-genai>=0.1.1
+
+# Fallback AI Provider
+g4f>=0.3.0
