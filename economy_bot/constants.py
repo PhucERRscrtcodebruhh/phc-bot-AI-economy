@@ -163,11 +163,12 @@ BAUCUA_MAP = {
 # Nhóm các danh mục trong Help menu
 HELP_CATEGORIES = {
     "⛏️ Khai Thác & Chế Tạo": ["mine", "bag", "sell", "listore", "checkgia", "luyenkim", "taiche", "shop"],
-    "🎲 Trò Chơi giải trí": ["taixiu", "trieuphu", "cf", "cauca"],
+    "🏢 Doanh Nghiệp & M&A": ["company"],
+    "🎲 Trò Chơi Giải Trí": ["taixiu", "trieuphu", "cf", "cauca", "masoi", "whoisspy"],
     "👤 Tài Khoản & Tiền Tệ": ["me", "acc", "give", "daily", "tktocoin", "lb"],
     "🏭 Kinh Tế Vi Mô": ["pwork"],
     "🧬 Giả Lập Số Phận": ["cuocdoi"],
-    "⚙️ Hệ Thống & Admin": ["ping", "quang"]
+    "🛡️ Quản Trị & Tiện Ích": ["pgiveaway", "mute", "unmute", "ban", "kick", "ping", "quang"]
 }
 
 # =======================================================

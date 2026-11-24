@@ -1,5 +1,8 @@
-# Discord Bot Core
-discord.py>=2.3.2
+# Discord Bot Core (v2.6+ required for UI Components V2)
+discord.py>=2.6.0
+
+# Async SQLite (WAL mode)
+aiosqlite>=0.20.0
 
 # Biến môi trường (.env)
 python-dotenv>=1.0.0

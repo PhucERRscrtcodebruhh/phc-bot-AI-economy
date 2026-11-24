@@ -1,6 +1,7 @@
 # economy_bot/main.py
 import os
 import datetime
+import aiosqlite
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
@@ -39,12 +40,22 @@ intents.presences = False
 class KatEconomyBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.db = None
 
     async def setup_hook(self):
+        if self.db is None:
+            corp_db_path = os.path.join(BASE_DIR, 'corporate_economy.db')
+            self.db = await aiosqlite.connect(corp_db_path)
+            self.db.row_factory = aiosqlite.Row
+            await self.db.execute("PRAGMA journal_mode=WAL;")
+            await self.db.execute("PRAGMA foreign_keys=ON;")
+            await self.db.commit()
+
         print("🛰️ [ECONOMY BOT] Đang khởi động hệ thống Cogs...")
         extensions = [
             'economy', 'sinkhole', 'lifesim', 'other',
-            'command', 'pet', 'whoisspy', 'masoi', 'admin_economy'
+            'command', 'pet', 'whoisspy', 'masoi', 'admin_economy',
+            'corporate_economy_fsm'
         ]
 
         for ext in extensions:
@@ -57,6 +68,12 @@ class KatEconomyBot(commands.Bot):
                 print(f"   ❌ FAILED to load Cog '{ext}': {e}")
 
         print("⚙️ [ECONOMY BOT] Tất cả các Cogs đã được đồng bộ hóa thành công!")
+
+    async def close(self):
+        if self.db is not None:
+            await self.db.close()
+            self.db = None
+        await super().close()
 
 
 bot = KatEconomyBot(command_prefix=['p', 'P'], case_insensitive=True, intents=intents)

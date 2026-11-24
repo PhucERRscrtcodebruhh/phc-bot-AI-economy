@@ -112,8 +112,8 @@ class HelpDropdown(Select):
             cmd = self.bot.get_command(name)
             if cmd:
                 aliases = f" (hoặc {', '.join(cmd.aliases)})" if cmd.aliases else ""
-                description = cmd.help or "Không có mô tả chi tiết."
-                embed.add_field(name=f"`p{cmd.name}`{aliases}", value=description, inline=False)
+                description = cmd.help or getattr(cmd, "description", None) or "Không có mô tả chi tiết."
+                embed.add_field(name=f"`p{cmd.name}` / `/{cmd.name}`{aliases}", value=description, inline=False)
         await interaction.response.edit_message(embed=embed)
 
 class DynamicHelpView(View):
@@ -185,7 +185,7 @@ class OtherCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="ping")
+    @commands.hybrid_command(name="ping", description="Kiểm tra độ trễ (latency) của hệ thống KatBot")
     async def ping(self, ctx):
         ws_latency = round(self.bot.latency * 1000)
         embed = discord.Embed(
@@ -196,7 +196,7 @@ class OtherCog(commands.Cog):
         embed.set_footer(text=f"Kiểm tra bởi {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
         await ctx.reply(embed=embed)
 
-    @commands.command(name="me", aliases=["acc", "user"])
+    @commands.hybrid_command(name="me", aliases=["acc", "user"], description="Xem ví tiền Kesling và số vé hiện có")
     async def account_info(self, ctx, member: discord.Member = None):
         target = member or ctx.author
         user_id = str(target.id)
@@ -211,7 +211,7 @@ class OtherCog(commands.Cog):
             embed.set_thumbnail(url=target.avatar.url)
         await ctx.send(embed=embed)
 
-    @commands.command(name="anxin")
+    @commands.hybrid_command(name="anxin", description="Xin tiền Kesling từ một đại gia khác")
     async def anxin(self, ctx, giver: discord.Member = None, amount_str: str = None):
         if giver is None or amount_str is None:
             return await ctx.send("💡 Dùng lệnh: `p anxin <@người_cho> <số_tiền>` (Ví dụ: `p anxin @KatBot 50k`)")
@@ -231,7 +231,7 @@ class OtherCog(commands.Cog):
         view = AnXinView(beggar=ctx.author, giver=giver, amount=amount)
         await ctx.send(content=giver.mention, embed=embed, view=view)
 
-    @commands.command(name="give")
+    @commands.hybrid_command(name="give", description="Chuyển tiền Kesling cho người chơi khác")
     async def give(self, ctx, receiver: discord.Member = None, amount_str: str = None):
         if receiver is None or amount_str is None:
             return await ctx.send("💡 Dùng lệnh: `p give <@người_nhận> <số_tiền>` (Ví dụ: `p give @KatBot 100k` hoặc `p give @KatBot 1.5m`)")
@@ -258,7 +258,7 @@ class OtherCog(commands.Cog):
         
         await ctx.send(f"✅ Chuyển tiền thành công! {ctx.author.mention} đã gửi **{amount:,} {KESLING_ICON}** sang tài khoản của {receiver.mention}!")
 
-    @commands.command(name="daily")
+    @commands.hybrid_command(name="daily", description="Điểm danh nhận quà Kesling hàng ngày")
     async def daily(self, ctx):
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)
@@ -291,7 +291,7 @@ class OtherCog(commands.Cog):
         save_data(player_inventory)
         await ctx.send(msg)
 
-    @commands.command(name="tktocoin")
+    @commands.hybrid_command(name="tktocoin", description="Quy đổi Ticket thành tiền Kesling")
     async def tktocoin(self, ctx):
         user_id = str(ctx.author.id)
         user_data = get_user_data(user_id)
@@ -305,7 +305,7 @@ class OtherCog(commands.Cog):
         save_data(player_inventory)
         await ctx.send(f"💸 Bạn đã quy đổi 1x Ticket lấy thành công **{amount:,} {KESLING_ICON}**!")
 
-    @commands.command(name="checkgia")
+    @commands.hybrid_command(name="checkgia", description="Kiểm tra giá bán hiện tại của quặng hoặc vật phẩm")
     async def check_price(self, ctx, ore_name: str = None):
         if ore_name is None:
             return await ctx.send("💡 Dùng lệnh: `pcheckgia <tên_vật_phẩm>`")
@@ -314,12 +314,17 @@ class OtherCog(commands.Cog):
             return await ctx.send("❌ Không tìm thấy giá của vật phẩm này.")
         await ctx.send(f"✅ Giá của {emoji_icon.get(key, '')} **{key}** hiện tại là: **{price[key]:,} {KESLING_ICON}** / 1 đơn vị.")
 
-    @commands.command(name="quang")
-    async def search_ore_image(self, ctx, *, ten_quang):
+    @commands.hybrid_command(name="quang", description="Tìm kiếm hình ảnh thực tế của một loại quặng")
+    async def search_ore_image(self, ctx, *, ten_quang: str):
         url = f"https://www.bing.com/search?q={ten_quang}"
         await ctx.send(f"🔍 Đây là liên kết tìm kiếm hình ảnh thực tế về **{ten_quang}**: {url}")
 
-    @commands.group(name="com", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="com",
+        fallback="play",
+        invoke_without_command=True,
+        description="Chơi Endless Trivia Cộng Đồng"
+    )
     async def community_quiz_group(self, ctx):
         system_data = get_system_data()
         questions = system_data.get("community_questions", [])
@@ -375,7 +380,7 @@ class OtherCog(commands.Cog):
                 await ctx.send(f"❌ **Sai rồi!** Đáp án đúng là: **{shuffled_choices[new_correct_index]}**.\n🏁 Trò chơi kết thúc! Tổng điểm vô tận của bạn là: **{score}** câu đúng.")
                 break
 
-    @community_quiz_group.command(name="add")
+    @community_quiz_group.command(name="add", description="Đóng góp câu hỏi mới vào kho Trivia cộng đồng")
     async def add_community_question(self, ctx):
         class TriggerView(View):
             def __init__(self):
@@ -430,7 +435,7 @@ class OtherCog(commands.Cog):
                 continue
         return embed
 
-    @commands.command(name="lb", aliases=["leaderboard"])
+    @commands.hybrid_command(name="lb", aliases=["leaderboard"], description="Xem bảng xếp hạng tiền mặt hoặc quặng hiếm")
     async def lb(self, ctx, lb_type: str = "money"):
         if not player_inventory:
             return await ctx.send("📉 Chưa có dữ liệu của người chơi nào.")
@@ -506,24 +511,36 @@ class OtherCog(commands.Cog):
 
     # ============ HELP COMMAND ============
 
-    @commands.command(name="help", aliases=["hlp"])
-    async def new_help_command(self, ctx):
+    @staticmethod
+    def build_onboarding_help(bot: commands.Bot, author: discord.abc.User):
         embed = discord.Embed(
-            title="📚 BẢNG HƯỚNG DẪN LỆNH (KATBOT HELP MENU)",
+            title="🌟 HƯỚNG DẪN NGƯỜI MỚI BẮT ĐẦU (KATBOT)",
             description=(
-                "Chào mừng oniichan đã quay trở lại!\n"
-                "Hãy chọn một danh mục từ danh sách **Dropdown Menu** phía dưới để xem chi tiết nhé.\n\n"
-                "📌 **Các danh mục tính năng hiện tại:**\n"
-                "• ⛏️ *Khai Thác & Chế Tạo*: Đào quặng, luyện kim, bán quặng, túi đồ, shop...\n"
-                "• 🎲 *Trò Chơi Giải Trí*: Tài xỉu chống hack, lật xu, câu cá, triệu phú...\n"
-                "• 👤 *Tài Khoản & Tiền Tệ*: Điểm danh hàng ngày, bảng xếp hạng, chuyển tiền...\n"
-                "• 🏭 *Kinh Tế Vi Mô*: Làm ruộng, kiếm tiền mưu sinh...\n"
-                "• 🧬 *Giả Lập Số Phận*: Game cuộc đời bằng AI."
+                f"Chào mừng {author.mention} đến với **KatBot Economy**!\n"
+                "Bot hỗ trợ cả **Slash Command (`/`)** và **Prefix (`p` hoặc `P`, ví dụ `pdaily`, `pmine`)**.\n\n"
+                "🚀 **Lộ trình 4 bước cho người mới:**\n"
+                "1️⃣ **Nhận vốn khởi nghiệp:** Gõ `pdaily` để điểm danh nhận tiền Kesling mỗi ngày.\n"
+                "2️⃣ **Kiếm tiền & tài nguyên:** Gõ `pmine` (`/mine`) để đào quặng hoặc `pwork` (`/pwork`) để làm việc.\n"
+                "3️⃣ **Kiểm tra & bán đồ:** Gõ `pbag` (`/bag`) xem kho đồ, `psell` (`/sell`) để bán lấy tiền, `pme` xem tài khoản.\n"
+                "4️⃣ **Phát triển nâng cao:**\n"
+                "• 🏢 `/company` (`pcompany`): Lập công ty, thuê nhân công, sản xuất & thâu tóm M&A.\n"
+                "• 🐾 `ppet` / `pcuocdoi`: Nuôi thú cưng & giả lập cuộc đời.\n"
+                "• 🎲 `/masoi`, `/whoisspy`, `ptaixiu`, `pcauca`: Minigame giải trí cùng server.\n\n"
+                "👇 *Chọn một danh mục ở menu bên dưới để xem chi tiết từng lệnh!*"
             ),
             color=discord.Color.gold()
         )
-        embed.set_footer(text="Bảng menu sẽ tự động đóng sau 60 giây hoạt động.")
-        view = DynamicHelpView(self.bot, ctx.author)
+        embed.set_footer(text="Dùng /help hoặc phelp bất cứ lúc nào • Menu tự đóng sau 60 giây")
+        view = DynamicHelpView(bot, author)
+        return embed, view
+
+    @commands.hybrid_command(
+        name="help",
+        aliases=["hlp"],
+        description="Hướng dẫn người mới bắt đầu & danh sách lệnh KatBot"
+    )
+    async def new_help_command(self, ctx):
+        embed, view = self.build_onboarding_help(self.bot, ctx.author)
         view.message = await ctx.send(embed=embed, view=view)
 
 async def setup(bot):

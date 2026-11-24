@@ -734,7 +734,11 @@ class LifeSimCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="cuocdoi", aliases=["life"])
+    @commands.hybrid_command(
+        name="cuocdoi",
+        aliases=["life"],
+        description="Hệ thống mô phỏng cuộc sống RPG vô tận sử dụng AI"
+    )
     async def cuocdoi_command(self, ctx):
         """Hệ thống mô phỏng cuộc sống RPG vô tận sử dụng AI."""
         view = LifeStartView(ctx, ctx.author.id)

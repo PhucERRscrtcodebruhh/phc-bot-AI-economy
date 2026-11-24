@@ -71,21 +71,11 @@ class CommandCog(commands.Cog):
         
         await ctx.send(f"🎉 Chúc mừng {winner_mentions} đã xuất sắc trúng thưởng **{reward}**!")
 
-    @commands.hybrid_command(name="phelp", description="Hiển thị danh sách các lệnh của hệ thống")
+    @commands.hybrid_command(name="phelp", description="Hướng dẫn người mới bắt đầu & danh sách lệnh KatBot")
     async def phelp(self, ctx):
-        embed = discord.Embed(
-            title="📋 DANH SÁCH LỆNH BOT",
-            description="Dưới đây là các lệnh cậu có thể sử dụng:",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="/pgiveaway", value="Tạo giveaway mới.\n*Cú pháp:* `/pgiveaway reward: <quà> winners: <số người> duration: <thời gian>`", inline=False)
-        embed.add_field(name="/phelp", value="Hiển thị bảng hướng dẫn này.", inline=False)
-        embed.add_field(name="/aimod", value="Xem trạng thái và cấu hình AI Moderation tiếng Việt (gpt-oss-safeguard-20b).", inline=False)
-        embed.add_field(name="/mute", value="Tạm tắt tiếng (timeout) thành viên.\n*Cú pháp:* `/mute member: @user duration: <10m/1h> reason: <lý do>`", inline=False)
-        embed.add_field(name="/unmute", value="Gỡ tắt tiếng cho thành viên.\n*Cú pháp:* `/unmute member: @user reason: <lý do>`", inline=False)
-        embed.add_field(name="/ban", value="Trục xuất vĩnh viễn thành viên khỏi server.", inline=False)
-        embed.add_field(name="/kick", value="Sút thành viên ra khỏi server.", inline=False)
-        await ctx.send(embed=embed)
+        from other import OtherCog
+        embed, view = OtherCog.build_onboarding_help(self.bot, ctx.author)
+        view.message = await ctx.send(embed=embed, view=view)
 
     @commands.hybrid_command(name="ban", description="Ban một thành viên ra khỏi máy chủ")
     @commands.has_permissions(ban_members=True)
